@@ -732,6 +732,58 @@ print(resp.choices[0].message.content)</pre>
     </div>
   </div>
 
+  <!-- Quota Details Modal -->
+  <div id="quota-modal" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+    <div class="bg-dark-card border border-dark-cardBorder rounded-2xl max-w-2xl w-full max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
+      <!-- Header -->
+      <div class="px-6 py-4 border-b border-dark-cardBorder flex items-center justify-between bg-dark-input/50">
+        <div class="flex items-center space-x-3">
+          <div class="w-9 h-9 rounded-xl bg-brand-500/10 border border-brand-500/20 text-brand-400 flex items-center justify-center font-bold text-base">
+            <i class="fa-solid fa-chart-pie"></i>
+          </div>
+          <div>
+            <h3 class="text-sm font-bold text-white font-mono" id="modal-quota-title">Квота и баланс аккаунта</h3>
+            <span class="text-[11px] text-gray-400 font-mono" id="modal-quota-subtitle"></span>
+          </div>
+        </div>
+        <button onclick="closeQuotaModal()" class="text-gray-400 hover:text-white p-1"><i class="fa-solid fa-xmark text-lg"></i></button>
+      </div>
+
+      <!-- Content -->
+      <div class="p-6 overflow-y-auto space-y-5 flex-1 text-xs">
+        <!-- Tier / Subscription Banner -->
+        <div id="modal-quota-tier-card" class="p-4 rounded-xl border bg-dark-input flex items-center justify-between">
+          <!-- Populated dynamically -->
+        </div>
+
+        <!-- Models Quota Progress List -->
+        <div>
+          <div class="flex items-center justify-between mb-2.5">
+            <span class="font-bold text-gray-300 uppercase tracking-wider text-[11px]">Остаток квоты по моделям (RPD / Buckets)</span>
+            <span id="modal-quota-reset-time" class="text-[11px] font-mono text-gray-400"></span>
+          </div>
+          <div id="modal-quota-models-list" class="space-y-2.5">
+            <!-- Populated dynamically -->
+          </div>
+        </div>
+
+        <!-- Raw JSON / Extra Details -->
+        <details class="bg-dark-bg p-3 rounded-xl border border-dark-cardBorder group">
+          <summary class="font-mono text-gray-400 cursor-pointer hover:text-gray-200 text-[11px] select-none flex items-center justify-between">
+            <span>Сырой ответ API провайдера (Raw JSON)</span>
+            <i class="fa-solid fa-chevron-down group-open:rotate-180 transition-transform"></i>
+          </summary>
+          <pre id="modal-quota-raw" class="mt-2 text-[10px] text-gray-300 overflow-x-auto whitespace-pre-wrap font-mono max-h-48"></pre>
+        </details>
+      </div>
+
+      <!-- Footer -->
+      <div class="px-6 py-3 border-t border-dark-cardBorder bg-dark-input/50 flex justify-end">
+        <button onclick="closeQuotaModal()" class="px-4 py-2 bg-dark-input hover:bg-dark-cardBorder border border-dark-cardBorder text-gray-300 rounded-xl text-xs font-semibold transition">Закрыть</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Toast Container -->
   <div id="toast-container" class="fixed bottom-5 right-5 z-50 flex flex-col space-y-2 pointer-events-none"></div>
 

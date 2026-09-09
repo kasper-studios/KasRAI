@@ -412,7 +412,7 @@ async function verifySingleAccount(providerId, accId, btn = null) {
   }
 }
 
-// Single Account Quota Check
+// Single Account Quota Check (Modal Inspector)
 async function checkSingleAccountQuota(providerId, accId, btn = null) {
   const originalHtml = btn ? btn.innerHTML : null;
   if (btn) btn.innerHTML = '<i class="fa-solid fa-spinner animate-spin text-brand-400"></i>';
@@ -420,24 +420,129 @@ async function checkSingleAccountQuota(providerId, accId, btn = null) {
   try {
     const res = await fetch(`/api/providers/${providerId}/accounts/${accId}/quota`);
     const data = await res.json();
-    if (data.supported) {
-      let msg = `📊 Тариф: ${data.subscriptionTier || 'Free'}`;
-      if (data.modelsQuota) {
-        const topModel = Object.keys(data.modelsQuota)[0];
-        if (topModel) {
-          msg += `\n${topModel}: ${data.modelsQuota[topModel].remainingPercent}% осталось`;
-        }
-      }
-      showToast(msg, 'info', 4500);
-    } else {
-      showToast(data.message || 'Чекер квоты не поддерживается для этого типа', 'warning');
-    }
+    openQuotaModal(providerId, accId, data);
     loadProviders();
   } catch (err) {
     showToast('Ошибка получения квоты: ' + err.message, 'error');
   } finally {
     if (btn && originalHtml) btn.innerHTML = originalHtml;
   }
+}
+
+function openQuotaModal(providerId, accId, data) {
+  const modal = document.getElementById('quota-modal');
+  if (!modal) return;
+
+  const p = cachedProviders.find((x) => x.id === providerId);
+  const acc = (p?.accounts || []).find((a) => a.id === accId);
+
+  const titleEl = document.getElementById('modal-quota-title');
+  const subtitleEl = document.getElementById('modal-quota-subtitle');
+  const tierCard = document.getElementById('modal-quota-tier-card');
+  const modelsList = document.getElementById('modal-quota-models-list');
+  const resetTimeEl = document.getElementById('modal-quota-reset-time');
+  const rawEl = document.getElementById('modal-quota-raw');
+
+  titleEl.innerText = `${acc?.name || accId} • Квота [${p?.name || providerId}]`;
+  subtitleEl.innerText = `Провайдер: ${providerId} | Приоритет: P:${acc?.priority || 0} | Тип: ${acc?.authType || 'key'}`;
+
+  // Raw JSON
+  rawEl.innerText = JSON.stringify(data, null, 2);
+
+  if (!data.supported) {
+    tierCard.className = 'p-4 rounded-xl border border-dark-cardBorder bg-dark-input flex items-center justify-between';
+    tierCard.innerHTML = `
+      <div class="flex items-center space-x-3">
+        <i class="fa-solid fa-circle-info text-gray-500 text-xl"></i>
+        <div>
+          <h4 class="font-bold text-gray-300">Статус квоты недоступен</h4>
+          <p class="text-[11px] text-gray-500">${data.message || 'Данный провайдер не предоставляет API проверки квот'}</p>
+        </div>
+      </div>
+    `;
+    modelsList.innerHTML = '<div class="text-gray-500 italic py-4 text-center">Нет детальных данных по квотам моделей</div>';
+    resetTimeEl.innerText = '';
+    modal.classList.remove('hidden');
+    return;
+  }
+
+  // Tier Card
+  const isPro = data.isPro || (data.subscriptionTier && data.subscriptionTier.includes('Pro'));
+  tierCard.className = `p-4 rounded-xl border ${isPro ? 'border-amber-500/40 bg-gradient-to-r from-amber-500/10 via-yellow-500/10 to-transparent' : 'border-dark-cardBorder bg-dark-input'} flex items-center justify-between`;
+  tierCard.innerHTML = `
+    <div class="flex items-center space-x-3">
+      <div class="w-10 h-10 rounded-xl ${isPro ? 'bg-amber-500/20 text-yellow-300 border border-amber-500/30' : 'bg-dark-bg text-gray-400 border border-dark-cardBorder'} flex items-center justify-center font-bold text-lg">
+        ${isPro ? '⭐' : '📦'}
+      </div>
+      <div>
+        <div class="flex items-center space-x-2">
+          <h4 class="font-bold text-sm ${isPro ? 'text-yellow-300' : 'text-gray-200'}">${data.subscriptionTier || 'Standard'}</h4>
+          <span class="px-2 py-0.5 rounded text-[10px] font-mono ${isPro ? 'bg-amber-500/20 text-yellow-400 border border-amber-500/30' : 'bg-dark-bg text-gray-400 border border-dark-cardBorder'}">${isPro ? 'PREMIUM TIER' : 'FREE TIER'}</span>
+        </div>
+        <p class="text-[11px] text-gray-400 mt-0.5">Аккаунт подключен и активен в пуле ротации KasRAI</p>
+      </div>
+    </div>
+    <div class="text-right font-mono">
+      <span class="text-xs text-gray-400">Статус:</span>
+      <div class="text-xs font-bold text-emerald-400">АКТИВЕН</div>
+    </div>
+  `;
+
+  // Reset time
+  if (data.earliestResetTime) {
+    const rDate = new Date(data.earliestResetTime);
+    resetTimeEl.innerHTML = `<i class="fa-solid fa-clock-rotate-left mr-1 text-brand-400"></i>Сброс: ${rDate.toLocaleTimeString()} (${rDate.toLocaleDateString()})`;
+  } else {
+    resetTimeEl.innerText = '';
+  }
+
+  // Models Progress Bars
+  modelsList.innerHTML = '';
+  const modelsQuota = data.modelsQuota || {};
+  const entries = Object.entries(modelsQuota);
+
+  if (entries.length === 0) {
+    modelsList.innerHTML = '<div class="text-gray-500 italic py-4 text-center">Модели без ограничений квот или данные отсутствуют</div>';
+  } else {
+    entries.forEach(([mId, info]) => {
+      const pct = Math.max(0, Math.min(100, info.remainingPercent !== undefined ? info.remainingPercent : Math.round((info.remainingFraction || 1) * 100)));
+      
+      let barColor = 'bg-emerald-500';
+      let textColor = 'text-emerald-400';
+      if (pct <= 20) {
+        barColor = 'bg-rose-500';
+        textColor = 'text-rose-400';
+      } else if (pct <= 50) {
+        barColor = 'bg-amber-500';
+        textColor = 'text-amber-400';
+      }
+
+      const itemEl = document.createElement('div');
+      itemEl.className = 'bg-dark-input p-3 rounded-xl border border-dark-cardBorder space-y-1.5';
+      itemEl.innerHTML = `
+        <div class="flex items-center justify-between text-xs">
+          <div class="flex items-center space-x-2 truncate">
+            <span class="font-mono font-bold text-gray-200 truncate">${info.displayName || mId}</span>
+          </div>
+          <div class="flex items-center space-x-2 font-mono">
+            ${info.resetTime ? `<span class="text-[10px] text-gray-500">${new Date(info.resetTime).toLocaleTimeString()}</span>` : ''}
+            <span class="font-bold ${textColor}">${pct}%</span>
+          </div>
+        </div>
+        <div class="w-full bg-dark-bg rounded-full h-2 overflow-hidden border border-dark-cardBorder/40">
+          <div class="${barColor} h-2 rounded-full transition-all duration-500" style="width: ${pct}%"></div>
+        </div>
+      `;
+      modelsList.appendChild(itemEl);
+    });
+  }
+
+  modal.classList.remove('hidden');
+}
+
+function closeQuotaModal() {
+  const modal = document.getElementById('quota-modal');
+  if (modal) modal.classList.add('hidden');
 }
 
 // Toggle Provider State
