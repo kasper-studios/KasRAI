@@ -301,6 +301,13 @@ print(resp.choices[0].message.content)</pre>
             </tbody>
           </table>
         </div>
+        <!-- Load more -->
+        <div id="logs-load-more-wrap" class="hidden mt-4 flex justify-center">
+          <button onclick="loadMoreLogs()" class="px-6 py-2 rounded-lg bg-dark-input border border-dark-cardBorder text-gray-300 hover:text-white hover:border-brand-500 transition text-sm font-mono flex items-center gap-2">
+            <i class="fa-solid fa-chevron-down text-xs"></i>
+            <span id="logs-load-more-label">Загрузить ещё 50</span>
+          </button>
+        </div>
       </div>
     </section>
 
@@ -382,7 +389,7 @@ print(resp.choices[0].message.content)</pre>
             <span class="text-xs font-semibold text-gray-400 uppercase">Ответ модели</span>
             <div class="flex items-center space-x-2">
               <span id="play-stats" class="text-[11px] font-mono text-brand-400 px-2 py-0.5 rounded bg-brand-500/10 border border-brand-500/20 hidden"></span>
-              <span id="play-status" class="text-xs font-mono text-gray-500">Ожидание...</span>
+              <span id="play-status" class="text-xs font-mono text-gray-600">— Готов —</span>
             </div>
           </div>
           <div id="play-output" class="flex-1 bg-dark-input border border-dark-cardBorder rounded-xl p-4 font-mono text-sm whitespace-pre-wrap overflow-y-auto min-h-[260px] text-gray-200 selection:bg-brand-500">

@@ -39,10 +39,10 @@ export async function logCall(entry) {
   }
 }
 
-export async function getRecentLogs(limit = 100) {
+export async function getRecentLogs(limit = 100, offset = 0) {
   const current = await logsDB.get('items');
   const items = Array.isArray(current) ? current : [];
-  return items.slice(0, limit);
+  return items.slice(offset, offset + limit);
 }
 
 export async function getLogById(id) {

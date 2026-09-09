@@ -314,7 +314,7 @@ function renderProviders() {
               ` : ''}
               <button onclick="openAddAccountModal('${p.id}')" class="px-2 py-1 bg-dark-input hover:bg-dark-cardBorder text-gray-200 border border-dark-cardBorder rounded-lg text-[11px] font-medium transition flex items-center space-x-1">
                 <i class="fa-solid fa-plus text-[10px]"></i>
-                <span>+ Ключ</span>
+                <span>Ключ</span>
               </button>
             </div>
           </div>
@@ -875,13 +875,30 @@ async function loadRoutes() {
     const container = document.getElementById('routes-container');
     container.innerHTML = '';
 
+    if (!routes || routes.length === 0) {
+      container.innerHTML = `
+        <div class="flex flex-col items-center justify-center py-16 text-center">
+          <i class="fa-solid fa-route text-4xl text-gray-600 mb-4"></i>
+          <p class="text-gray-400 font-medium">Маршрутов пока нет</p>
+          <p class="text-gray-600 text-sm mt-1">Нажмите «+ Создать маршрут» чтобы добавить цепочку фоллбеков</p>
+        </div>`;
+      return;
+    }
+
     routes.forEach((r) => {
+      // API returns: alias, rotationMode, targets, description (no .name/.mode/.id)
+      const routeName = r.alias || r.name || '(без имени)';
+      const routeMode = r.rotationMode || r.mode || 'priority';
+      const routeId = r.alias || r.id || routeName;
+      const routeEnabled = r.enabled !== false;
+
       const card = document.createElement('div');
       card.className = 'bg-dark-card border border-dark-cardBorder rounded-2xl p-5 shadow-sm space-y-3';
 
       const targetsHTML = (r.targets || []).map((t, idx) => `
         <span class="inline-flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-dark-input border border-dark-cardBorder text-xs font-mono">
           <span class="text-gray-500 font-bold">${idx + 1}.</span>
+          <span class="text-gray-400 text-[10px]">[${t.provider || '-'}]</span>
           <span class="text-gray-200">${t.model}</span>
           ${t.priority !== undefined ? `<span class="text-brand-400 text-[10px] ml-1">P:${t.priority}</span>` : ''}
         </span>
@@ -891,17 +908,17 @@ async function loadRoutes() {
         <div class="flex items-center justify-between">
           <div>
             <div class="flex items-center space-x-2">
-              <span class="text-base font-bold text-white font-mono">${r.name}</span>
-              <span class="px-2 py-0.5 rounded text-[10px] font-mono uppercase bg-brand-500/10 text-brand-400 border border-brand-500/20">${r.mode}</span>
-              <button onclick="copyToClipboard('${r.name}', this)" title="Скопировать имя маршрута" class="text-gray-500 hover:text-gray-300 text-xs"><i class="fa-regular fa-copy"></i></button>
+              <span class="text-base font-bold text-white font-mono">${routeName}</span>
+              <span class="px-2 py-0.5 rounded text-[10px] font-mono uppercase bg-brand-500/10 text-brand-400 border border-brand-500/20">${routeMode}</span>
+              <button onclick="copyToClipboard('${routeName}', this)" title="Скопировать имя маршрута" class="text-gray-500 hover:text-gray-300 text-xs"><i class="fa-regular fa-copy"></i></button>
             </div>
             <p class="text-xs text-gray-400 mt-0.5">${r.description || 'Пользовательский маршрут'}</p>
           </div>
           <div class="flex items-center space-x-2">
-            <button onclick="toggleRoute('${r.id}', ${r.enabled})" class="text-xs ${r.enabled ? 'text-emerald-400' : 'text-gray-500'} font-medium">
-              ${r.enabled ? 'Включен' : 'Выключен'}
+            <button onclick="toggleRoute('${routeId}', ${routeEnabled})" class="text-xs ${routeEnabled ? 'text-emerald-400' : 'text-gray-500'} font-medium hover:opacity-80 transition">
+              ${routeEnabled ? '● Включен' : '○ Выключен'}
             </button>
-            <button onclick="deleteRoute('${r.id}')" class="text-gray-500 hover:text-rose-400 text-sm p-1"><i class="fa-solid fa-trash-can"></i></button>
+            <button onclick="deleteRoute('${routeId}')" class="text-gray-500 hover:text-rose-400 text-sm p-1 transition"><i class="fa-solid fa-trash-can"></i></button>
           </div>
         </div>
         <div class="pt-2 border-t border-dark-cardBorder/60 flex flex-wrap gap-2 items-center">
@@ -990,10 +1007,49 @@ async function deleteRoute(id) {
 // 📜 4. Call Logs Tab & Inspector
 // ==========================================
 let activeInspectorLog = null;
+let logsOffset = 0;
+const LOGS_PAGE_SIZE = 50;
+
+function renderLogRow(l, tbody) {
+  const tr = document.createElement('tr');
+  tr.className = 'border-b border-dark-cardBorder hover:bg-dark-input/60 transition cursor-pointer group';
+  tr.onclick = () => openLogModal(l);
+
+  const statusBadge = l.status === 200 || l.statusCode === 200
+    ? '<span class="px-2 py-0.5 rounded text-[10px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-mono">200 OK</span>'
+    : (l.status === 999 || l.statusCode === 999)
+    ? '<span class="px-2 py-0.5 rounded text-[10px] bg-purple-500/20 text-purple-300 border border-purple-500/40 font-mono font-bold" title="Zero-Token Guard">💩 999</span>'
+    : `<span class="px-2 py-0.5 rounded text-[10px] bg-rose-500/10 text-rose-400 border border-rose-500/20 font-mono">${l.statusCode || l.status}</span>`;
+
+  const typeBadge = l.stream
+    ? '<span class="text-[10px] font-mono text-purple-400">stream</span>'
+    : '<span class="text-[10px] font-mono text-gray-500">sync</span>';
+
+  const time = new Date(l.timestamp).toLocaleTimeString();
+
+  tr.innerHTML = `
+    <td class="px-4 py-3 font-mono text-gray-400">${time}</td>
+    <td class="px-4 py-3 font-mono font-bold text-white truncate max-w-[150px]" title="${l.requestedModel}">${l.requestedModel || '-'}</td>
+    <td class="px-4 py-3 font-mono text-gray-300 truncate max-w-[200px]" title="${l.routedModel || '-'}">
+      <span class="text-brand-400">[${l.routedProvider || '-'}]</span> ${l.routedModel || '-'}
+    </td>
+    <td class="px-4 py-3">${statusBadge}</td>
+    <td class="px-4 py-3 font-mono text-amber-400">${l.latencyMs}ms</td>
+    <td class="px-4 py-3 font-mono text-gray-400">${l.totalTokens || l.tokens || 0}</td>
+    <td class="px-4 py-3">${typeBadge}</td>
+    <td class="px-4 py-3 text-right">
+      <span class="px-2 py-1 bg-dark-card border border-dark-cardBorder rounded text-brand-400 group-hover:bg-brand-600 group-hover:text-white transition text-[10px]">
+        <i class="fa-solid fa-eye mr-1"></i>Инспектор
+      </span>
+    </td>
+  `;
+  tbody.appendChild(tr);
+}
 
 async function loadLogs() {
+  logsOffset = 0;
   try {
-    const res = await fetch('/api/logs?limit=50');
+    const res = await fetch(`/api/logs?limit=${LOGS_PAGE_SIZE}&offset=0`);
     const logs = await res.json();
 
     const tbody = document.getElementById('logs-table-body');
@@ -1001,45 +1057,52 @@ async function loadLogs() {
 
     if (!logs || logs.length === 0) {
       tbody.innerHTML = '<tr><td colspan="8" class="px-4 py-8 text-center text-gray-500 italic">Логов пока нет. Сделайте первый запрос!</td></tr>';
+      document.getElementById('logs-load-more-wrap').classList.add('hidden');
       return;
     }
 
-    logs.forEach((l) => {
-      const tr = document.createElement('tr');
-      tr.className = 'border-b border-dark-cardBorder hover:bg-dark-input/60 transition cursor-pointer group';
-      tr.onclick = () => openLogModal(l);
+    logs.forEach((l) => renderLogRow(l, tbody));
+    logsOffset = logs.length;
 
-      const statusBadge = l.status === 200 || l.statusCode === 200
-        ? '<span class="px-2 py-0.5 rounded text-[10px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-mono">200 OK</span>'
-        : (l.status === 999 || l.statusCode === 999)
-        ? '<span class="px-2 py-0.5 rounded text-[10px] bg-purple-500/20 text-purple-300 border border-purple-500/40 font-mono font-bold" title="Zero-Token Guard">💩 999</span>'
-        : `<span class="px-2 py-0.5 rounded text-[10px] bg-rose-500/10 text-rose-400 border border-rose-500/20 font-mono">${l.statusCode || l.status}</span>`;
+    // Show "load more" only if a full page was returned (there may be more)
+    const wrap = document.getElementById('logs-load-more-wrap');
+    if (logs.length >= LOGS_PAGE_SIZE) {
+      wrap.classList.remove('hidden');
+      document.getElementById('logs-load-more-label').textContent = `Загрузить ещё ${LOGS_PAGE_SIZE}`;
+    } else {
+      wrap.classList.add('hidden');
+    }
+  } catch (err) {
+    showToast('Ошибка загрузки логов: ' + err.message, 'error');
+  }
+}
 
-      const typeBadge = l.stream
-        ? '<span class="text-[10px] font-mono text-purple-400">stream</span>'
-        : '<span class="text-[10px] font-mono text-gray-500">sync</span>';
+async function loadMoreLogs() {
+  try {
+    const btn = document.querySelector('#logs-load-more-wrap button');
+    if (btn) btn.disabled = true;
 
-      const time = new Date(l.timestamp).toLocaleTimeString();
+    const res = await fetch(`/api/logs?limit=${LOGS_PAGE_SIZE}&offset=${logsOffset}`);
+    const logs = await res.json();
 
-      tr.innerHTML = `
-        <td class="px-4 py-3 font-mono text-gray-400">${time}</td>
-        <td class="px-4 py-3 font-mono font-bold text-white truncate max-w-[150px]" title="${l.requestedModel}">${l.requestedModel || '-'}</td>
-        <td class="px-4 py-3 font-mono text-gray-300 truncate max-w-[200px]" title="${l.routedModel || '-'}">
-          <span class="text-brand-400">[${l.routedProvider || '-'}]</span> ${l.routedModel || '-'}
-        </td>
-        <td class="px-4 py-3">${statusBadge}</td>
-        <td class="px-4 py-3 font-mono text-amber-400">${l.latencyMs}ms</td>
-        <td class="px-4 py-3 font-mono text-gray-400">${l.totalTokens || l.tokens || 0}</td>
-        <td class="px-4 py-3">${typeBadge}</td>
-        <td class="px-4 py-3 text-right">
-          <span class="px-2 py-1 bg-dark-card border border-dark-cardBorder rounded text-brand-400 group-hover:bg-brand-600 group-hover:text-white transition text-[10px]">
-            <i class="fa-solid fa-eye mr-1"></i>Инспектор
-          </span>
-        </td>
-      `;
+    if (!logs || logs.length === 0) {
+      document.getElementById('logs-load-more-wrap').classList.add('hidden');
+      return;
+    }
 
-      tbody.appendChild(tr);
-    });
+    const tbody = document.getElementById('logs-table-body');
+    logs.forEach((l) => renderLogRow(l, tbody));
+    logsOffset += logs.length;
+
+    const wrap = document.getElementById('logs-load-more-wrap');
+    if (logs.length >= LOGS_PAGE_SIZE) {
+      wrap.classList.remove('hidden');
+      document.getElementById('logs-load-more-label').textContent = `Загрузить ещё ${LOGS_PAGE_SIZE}`;
+    } else {
+      wrap.classList.add('hidden');
+    }
+
+    if (btn) btn.disabled = false;
   } catch (err) {
     showToast('Ошибка загрузки логов: ' + err.message, 'error');
   }

@@ -562,8 +562,9 @@ apiRouter.delete('/routes/:alias', async (req, res) => {
 // GET /api/logs
 apiRouter.get('/logs', async (req, res) => {
   try {
-    const limit = parseInt(req.query.limit || '100', 10);
-    const logs = await getRecentLogs(limit);
+    const limit = parseInt(req.query.limit || '50', 10);
+    const offset = parseInt(req.query.offset || '0', 10);
+    const logs = await getRecentLogs(limit, offset);
     res.json(logs);
   } catch (err) {
     res.status(500).json({ error: err.message });
