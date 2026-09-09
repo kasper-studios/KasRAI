@@ -44,26 +44,76 @@ export async function checkAccountQuota(providerId, account) {
       const data = await res.json();
       const models = data.models || {};
       const modelsQuota = {};
+
+      // 1. Check real-time usage consumption via retrieveUserQuota
+      // fetchAvailableModels only shows static catalog quotaInfo where remainingFraction is often omitted/stale.
+      // retrieveUserQuota is the single source of truth for actual remaining fraction & reset timestamps!
+      const userQuotaMap = new Map();
+      try {
+        const uqRes = await fetch('https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+            'User-Agent': 'Antigravity/4.2.0 (X11; Linux x86_64) Chrome/142.0.7444.175 Electron/39.2.3',
+            'x-client-name': 'antigravity',
+            'x-client-version': '4.2.0',
+          },
+          body: JSON.stringify({ project: projectId }),
+          signal: AbortSignal.timeout(6000),
+        });
+        if (uqRes.ok) {
+          const uqData = await uqRes.json();
+          if (Array.isArray(uqData.buckets)) {
+            for (const b of uqData.buckets) {
+              if (b.modelId) {
+                userQuotaMap.set(b.modelId, {
+                  remainingFraction: typeof b.remainingFraction === 'number' ? b.remainingFraction : null,
+                  resetTime: b.resetTime || null,
+                });
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.warn(`[QuotaChecker] retrieveUserQuota non-fatal warning for ${account.name}: ${err.message}`);
+      }
+
       let totalFraction = 0;
       let count = 0;
       let earliestResetTime = null;
 
       for (const [mId, mInfo] of Object.entries(models)) {
-        if (mInfo.quotaInfo) {
-          const frac = typeof mInfo.quotaInfo.remainingFraction === 'number' ? mInfo.quotaInfo.remainingFraction : 1;
+        if (mInfo.quotaInfo || userQuotaMap.has(mId)) {
+          const liveInfo = userQuotaMap.get(mId);
+          let frac;
+          if (liveInfo && liveInfo.remainingFraction !== null) {
+            frac = liveInfo.remainingFraction;
+          } else if (typeof mInfo.quotaInfo?.remainingFraction === 'number') {
+            frac = mInfo.quotaInfo.remainingFraction;
+          } else if (mInfo.quotaInfo?.resetTime || liveInfo?.resetTime) {
+            // Upstream reported a resetTime with no fraction => quota is exhausted (0)
+            frac = 0;
+          } else {
+            // Truly unlimited model with no reset time
+            frac = 1;
+          }
+
+          const resetTime = liveInfo?.resetTime || mInfo.quotaInfo?.resetTime || null;
+
           modelsQuota[mId] = {
             displayName: mInfo.displayName || mId,
             remainingFraction: frac,
             remainingPercent: Math.round(frac * 100),
-            resetTime: mInfo.quotaInfo.resetTime || null,
+            resetTime,
           };
           totalFraction += frac;
           count++;
 
-          if (mInfo.quotaInfo.resetTime) {
-            const rDate = new Date(mInfo.quotaInfo.resetTime);
+          if (resetTime) {
+            const rDate = new Date(resetTime);
             if (!earliestResetTime || rDate < new Date(earliestResetTime)) {
-              earliestResetTime = mInfo.quotaInfo.resetTime;
+              earliestResetTime = resetTime;
             }
           }
         }

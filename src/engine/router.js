@@ -40,8 +40,8 @@ export class RouterEngine {
           continue;
         }
 
-        // Fetch viable accounts (excluding those on cooldown)
-        const viableAccounts = await accountManager.getViableAccounts(provider.id);
+        // Fetch viable accounts (excluding those on cooldown or exhausted on this model)
+        const viableAccounts = await accountManager.getViableAccounts(provider.id, t.model);
         if (viableAccounts.length > 0) {
           for (const acc of viableAccounts) {
             candidates.push({
@@ -71,7 +71,7 @@ export class RouterEngine {
       const provider = providersMap[providerId];
       if (provider && provider.enabled) {
         const mState = await modelStateEngine.getModelState(provider.id, targetModel);
-        const viableAccounts = await accountManager.getViableAccounts(provider.id);
+        const viableAccounts = await accountManager.getViableAccounts(provider.id, targetModel);
         console.log(`[Router] Viable accounts for direct ${provider.id}:`, viableAccounts.map(a => `${a.name} (P:${a.priority})`));
         return viableAccounts.map((acc) => ({
           provider,
@@ -88,7 +88,7 @@ export class RouterEngine {
       if (Array.isArray(provider.models) && provider.models.includes(requestedModel)) {
         const mState = await modelStateEngine.getModelState(provider.id, requestedModel);
         if (mState.status === 'broken_404') continue; // Don't auto-match 404 broken models
-        const viableAccounts = await accountManager.getViableAccounts(provider.id);
+        const viableAccounts = await accountManager.getViableAccounts(provider.id, requestedModel);
         return viableAccounts.map((acc) => ({
           provider,
           targetModel: requestedModel,
@@ -254,7 +254,13 @@ export class RouterEngine {
           err.message?.includes('quota');
 
         if (isQuotaErr && candidate.account) {
-          await accountManager.triggerAccountCooldown(candidate.provider.id, candidate.account.id, err);
+          // Pass full error object with data and headers so RetryInfo/quotaResetDelay is accurately parsed!
+          await accountManager.triggerAccountCooldown(candidate.provider.id, candidate.account.id, {
+            status: err.status,
+            message: err.message,
+            data: err.data || err.errorData,
+            headers: err.headers,
+          });
         }
 
         // If response headers already sent, cannot fallback

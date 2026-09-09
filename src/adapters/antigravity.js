@@ -460,7 +460,11 @@ export class AntigravityAdapter extends BaseAdapter {
     }
 
     if (!response) {
-      throw lastError || new Error('All Antigravity base URLs failed');
+      const enhancedErr = new Error(lastError?.message || 'All Antigravity base URLs failed');
+      enhancedErr.status = lastError?.status;
+      enhancedErr.data = lastError?.data;
+      enhancedErr.headers = lastError?.headers;
+      throw enhancedErr;
     }
 
     if (isGoogleCloudCode) {
@@ -697,7 +701,11 @@ export class AntigravityAdapter extends BaseAdapter {
     }
 
     if (!response) {
-      throw lastError || new Error('All Antigravity streaming endpoints failed');
+      const enhancedErr = new Error(lastError?.message || 'All Antigravity base URLs failed');
+      enhancedErr.status = lastError?.status;
+      enhancedErr.data = lastError?.data;
+      enhancedErr.headers = lastError?.headers;
+      throw enhancedErr;
     }
 
     res.setHeader('Content-Type', 'text/event-stream');

@@ -5,8 +5,9 @@ class AccountManager {
   /**
    * Retrieves an ordered list of viable accounts for a provider.
    * Auto-heals expired cooldowns.
+   * If targetModel is passed, checks account model-specific quota/buckets!
    */
-  async getViableAccounts(providerId) {
+  async getViableAccounts(providerId, targetModel = null) {
     const provider = await providersDB.get(providerId);
     if (!provider) return [];
 
@@ -32,8 +33,25 @@ class AccountManager {
       await providersDB.set(providerId, provider);
     }
 
-    // Filter active accounts (not in cooldown, not disabled)
-    const viable = accounts.filter((acc) => acc.status !== 'cooldown' && acc.status !== 'disabled' && acc.status !== 'invalid');
+    // Filter active accounts (not in cooldown, not disabled, not model-exhausted)
+    const cleanModel = targetModel ? targetModel.replace(/^(antigravity|gemini|openai|anthropic)\//i, '').trim() : null;
+
+    const viable = accounts.filter((acc) => {
+      if (acc.status === 'cooldown' || acc.status === 'disabled' || acc.status === 'invalid') {
+        return false;
+      }
+      // Check cached model quota if available: if this specific model is 0% and reset is in the future, skip it!
+      if (cleanModel && acc.quota?.modelsQuota && acc.quota.modelsQuota[cleanModel]) {
+        const mq = acc.quota.modelsQuota[cleanModel];
+        if (mq.remainingFraction === 0 && mq.resetTime) {
+          const resetMs = Date.parse(mq.resetTime);
+          if (!isNaN(resetMs) && resetMs > now) {
+            return false; // Skip account for THIS model because quota is genuinely exhausted!
+          }
+        }
+      }
+      return true;
+    });
 
     // Sort by priority (higher priority number = first; default 0)
     viable.sort((a, b) => (b.priority || 0) - (a.priority || 0));
