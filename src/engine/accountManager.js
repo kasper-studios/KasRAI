@@ -1,5 +1,6 @@
 import { providersDB } from '../db/index.js';
 import { parseRetryAfterMs } from '../utils/retryParser.js';
+import { checkAccountQuota } from '../utils/quotaChecker.js';
 
 class AccountManager {
   /**
@@ -75,8 +76,12 @@ class AccountManager {
 
   /**
    * Put an account on cooldown after a 429 / quota error.
+   * For antigravity: immediately re-checks real quota via retrieveUserQuota.
+   * If a model bucket is fully exhausted (0%), extends cooldown to resetTime
+   * so the router never wastes a request on a known-dead bucket until the
+   * daily reset (typically ~24h later).
    */
-  async triggerAccountCooldown(providerId, accountId, err) {
+  async triggerAccountCooldown(providerId, accountId, err, targetModel = null) {
     const provider = await providersDB.get(providerId);
     if (!provider) return;
 
@@ -89,7 +94,55 @@ class AccountManager {
 
     // 2. Fall back to provider configured rateLimitCooldownSec, or default 60s
     const configuredSec = provider.rateLimitCooldownSec || provider.defaultCooldownSec || 60;
-    const cooldownMs = parsedDelay !== null ? parsedDelay : configuredSec * 1000;
+    let cooldownMs = parsedDelay !== null ? parsedDelay : configuredSec * 1000;
+
+    // 3. For antigravity 429s: immediately fetch real quota to see if the model
+    //    bucket is genuinely exhausted. If so, extend cooldown to the reset time
+    //    so we stop spamming Google every 60s when quota is 0%.
+    if (providerId === 'antigravity') {
+      try {
+        console.log(`[AccountManager] 🔍 429 hit on '${acc.name}' — checking real quota...`);
+        const freshQuota = await checkAccountQuota(providerId, acc);
+
+        if (freshQuota?.ok && freshQuota.modelsQuota) {
+          const cleanModel = targetModel
+            ? targetModel.replace(/^(antigravity|gemini|openai|anthropic)\//i, '').trim()
+            : null;
+
+          // Find the most specific exhausted bucket for this model
+          let worstResetTime = null;
+
+          for (const [mId, mq] of Object.entries(freshQuota.modelsQuota)) {
+            const modelMatches = !cleanModel || mId === cleanModel || mId.startsWith(cleanModel);
+            if (modelMatches && mq.remainingFraction === 0 && mq.resetTime) {
+              const resetMs = Date.parse(mq.resetTime);
+              if (!isNaN(resetMs) && resetMs > Date.now()) {
+                if (!worstResetTime || resetMs > Date.parse(worstResetTime)) {
+                  worstResetTime = mq.resetTime;
+                }
+              }
+            }
+          }
+
+          if (worstResetTime) {
+            const resetMs = Date.parse(worstResetTime);
+            const remainingMs = resetMs - Date.now();
+            if (remainingMs > cooldownMs) {
+              console.warn(
+                `[AccountManager] 📛 Quota genuinely exhausted for '${acc.name}' (${cleanModel || 'all models'}). ` +
+                `Extending cooldown to resetTime: ${worstResetTime} (${Math.round(remainingMs / 3600000)}h from now)`
+              );
+              cooldownMs = remainingMs;
+            }
+          } else {
+            // Quota is NOT 0 — this was a temporary RPM/burst rate limit, keep short cooldown
+            console.log(`[AccountManager] ⚡ RPM burst limit for '${acc.name}'. Quota still available. Short cooldown: ${Math.round(cooldownMs / 1000)}s`);
+          }
+        }
+      } catch (quotaErr) {
+        console.warn(`[AccountManager] Quota check after 429 failed (non-fatal): ${quotaErr.message}`);
+      }
+    }
 
     acc.status = 'cooldown';
     acc.cooldownUntil = Date.now() + cooldownMs;

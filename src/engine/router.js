@@ -255,12 +255,13 @@ export class RouterEngine {
 
         if (isQuotaErr && candidate.account) {
           // Pass full error object with data and headers so RetryInfo/quotaResetDelay is accurately parsed!
+          // Also pass targetModel so quota check knows which bucket to inspect after 429!
           await accountManager.triggerAccountCooldown(candidate.provider.id, candidate.account.id, {
             status: err.status,
             message: err.message,
             data: err.data || err.errorData,
             headers: err.headers,
-          });
+          }, candidate.targetModel);
         }
 
         // If response headers already sent, cannot fallback
