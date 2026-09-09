@@ -54,8 +54,12 @@ export class RouterEngine {
         }
       }
       if (candidates.length > 0) {
-        // Sort candidates by effective model priority DESC
-        candidates.sort((a, b) => (b.modelPriority || 50) - (a.modelPriority || 50));
+        // Sort candidates by effective model priority DESC, then by account priority DESC
+        candidates.sort((a, b) => {
+          const modelDiff = (b.modelPriority || 50) - (a.modelPriority || 50);
+          if (modelDiff !== 0) return modelDiff;
+          return (b.account?.priority || 0) - (a.account?.priority || 0);
+        });
         return candidates;
       }
     }
@@ -68,6 +72,7 @@ export class RouterEngine {
       if (provider && provider.enabled) {
         const mState = await modelStateEngine.getModelState(provider.id, targetModel);
         const viableAccounts = await accountManager.getViableAccounts(provider.id);
+        console.log(`[Router] Viable accounts for direct ${provider.id}:`, viableAccounts.map(a => `${a.name} (P:${a.priority})`));
         return viableAccounts.map((acc) => ({
           provider,
           targetModel,
@@ -175,7 +180,6 @@ export class RouterEngine {
         } else {
           const responseData = await adapter.complete(requestPayload, candidate.targetModel);
           const latencyMs = Date.now() - attemptStart;
-
           await accountManager.recordAccountSuccess(candidate.provider.id, candidate.account.id, latencyMs);
           await logCall({
             requestedModel,
@@ -194,6 +198,8 @@ export class RouterEngine {
               targetModel: candidate.targetModel,
               account: candidate.account?.name || candidate.account?.id || 'default',
               baseURL: candidate.provider.baseURL,
+              attemptNumber: i + 1,
+              skippedErrors: errors,
             },
             upstreamResponse: responseData,
           });

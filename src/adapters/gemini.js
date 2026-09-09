@@ -128,6 +128,57 @@ export class GeminiAdapter extends BaseAdapter {
               } else {
                 parts.push({ text: `[Image URL: ${url}]` });
               }
+            } else if (item.type === 'input_audio' && item.input_audio?.data) {
+              const format = item.input_audio.format || 'wav';
+              const mimeType = format === 'mp3' ? 'audio/mp3' : 'audio/wav';
+              parts.push({
+                inlineData: {
+                  mimeType,
+                  data: item.input_audio.data,
+                },
+              });
+            } else if (item.type === 'video' || item.type === 'video_url') {
+              const vUrl = item.video_url?.url || item.url || '';
+              if (vUrl.startsWith('data:')) {
+                const match = vUrl.match(/^data:([^;]+);base64,(.+)$/);
+                if (match) {
+                  parts.push({
+                    inlineData: {
+                      mimeType: match[1],
+                      data: match[2],
+                    },
+                  });
+                } else {
+                  parts.push({ text: `[Video: ${vUrl}]` });
+                }
+              } else {
+                parts.push({ text: `[Video URL: ${vUrl}]` });
+              }
+            } else if (item.type === 'audio' || item.type === 'audio_url') {
+              const aUrl = item.audio_url?.url || item.url || '';
+              if (aUrl.startsWith('data:')) {
+                const match = aUrl.match(/^data:([^;]+);base64,(.+)$/);
+                if (match) {
+                  parts.push({
+                    inlineData: {
+                      mimeType: match[1],
+                      data: match[2],
+                    },
+                  });
+                } else {
+                  parts.push({ text: `[Audio: ${aUrl}]` });
+                }
+              } else {
+                parts.push({ text: `[Audio URL: ${aUrl}]` });
+              }
+            } else if (item.inline_data || item.inlineData) {
+              const idata = item.inline_data || item.inlineData;
+              parts.push({
+                inlineData: {
+                  mimeType: idata.mime_type || idata.mimeType || 'application/octet-stream',
+                  data: idata.data,
+                },
+              });
             } else if (item.text) {
               parts.push({ text: item.text });
             }

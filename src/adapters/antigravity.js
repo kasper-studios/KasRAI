@@ -185,6 +185,60 @@ export class AntigravityAdapter extends BaseAdapter {
               } else {
                 parts.push({ text: `[Image URL: ${url}]` });
               }
+            } else if (item.type === 'input_audio' && item.input_audio?.data) {
+              // OpenAI standard input_audio support (wav/mp3)
+              const format = item.input_audio.format || 'wav';
+              const mimeType = format === 'mp3' ? 'audio/mp3' : 'audio/wav';
+              parts.push({
+                inlineData: {
+                  mimeType,
+                  data: item.input_audio.data,
+                },
+              });
+            } else if (item.type === 'video' || item.type === 'video_url') {
+              // Video inline / URL support
+              const vUrl = item.video_url?.url || item.url || '';
+              if (vUrl.startsWith('data:')) {
+                const match = vUrl.match(/^data:([^;]+);base64,(.+)$/);
+                if (match) {
+                  parts.push({
+                    inlineData: {
+                      mimeType: match[1],
+                      data: match[2],
+                    },
+                  });
+                } else {
+                  parts.push({ text: `[Video: ${vUrl}]` });
+                }
+              } else {
+                parts.push({ text: `[Video URL: ${vUrl}]` });
+              }
+            } else if (item.type === 'audio' || item.type === 'audio_url') {
+              // Audio inline / URL support
+              const aUrl = item.audio_url?.url || item.url || '';
+              if (aUrl.startsWith('data:')) {
+                const match = aUrl.match(/^data:([^;]+);base64,(.+)$/);
+                if (match) {
+                  parts.push({
+                    inlineData: {
+                      mimeType: match[1],
+                      data: match[2],
+                    },
+                  });
+                } else {
+                  parts.push({ text: `[Audio: ${aUrl}]` });
+                }
+              } else {
+                parts.push({ text: `[Audio URL: ${aUrl}]` });
+              }
+            } else if (item.inline_data || item.inlineData) {
+              const idata = item.inline_data || item.inlineData;
+              parts.push({
+                inlineData: {
+                  mimeType: idata.mime_type || idata.mimeType || 'application/octet-stream',
+                  data: idata.data,
+                },
+              });
             } else if (item.text) {
               parts.push({ text: item.text });
             }
@@ -241,10 +295,34 @@ export class AntigravityAdapter extends BaseAdapter {
     if (typeof requestPayload.temperature === 'number') {
       innerRequest.generationConfig.temperature = requestPayload.temperature;
     }
+    if (typeof requestPayload.top_p === 'number') {
+      innerRequest.generationConfig.topP = requestPayload.top_p;
+    }
+    if (typeof requestPayload.top_k === 'number') {
+      innerRequest.generationConfig.topK = requestPayload.top_k;
+    }
     if (typeof requestPayload.max_tokens === 'number') {
       innerRequest.generationConfig.maxOutputTokens = requestPayload.max_tokens;
     } else if (typeof requestPayload.max_completion_tokens === 'number') {
       innerRequest.generationConfig.maxOutputTokens = requestPayload.max_completion_tokens;
+    }
+    if (Array.isArray(requestPayload.stop)) {
+      innerRequest.generationConfig.stopSequences = requestPayload.stop;
+    } else if (typeof requestPayload.stop === 'string') {
+      innerRequest.generationConfig.stopSequences = [requestPayload.stop];
+    }
+
+    // OpenAI response_format: { type: "json_object" | "json_schema" }
+    if (requestPayload.response_format) {
+      const rf = requestPayload.response_format;
+      if (rf.type === 'json_object') {
+        innerRequest.generationConfig.responseMimeType = 'application/json';
+      } else if (rf.type === 'json_schema' && rf.json_schema) {
+        innerRequest.generationConfig.responseMimeType = 'application/json';
+        if (rf.json_schema.schema) {
+          innerRequest.generationConfig.responseSchema = rf.json_schema.schema;
+        }
+      }
     }
 
     // Convert tools if provided
