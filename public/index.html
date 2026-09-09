@@ -1,0 +1,740 @@
+<!DOCTYPE html>
+<html lang="ru" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>KasRAI - AI Gateway Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              50: '#eef2ff',
+              100: '#e0e7ff',
+              400: '#818cf8',
+              500: '#6366f1',
+              600: '#4f46e5',
+              700: '#4338ca',
+            },
+            dark: {
+              bg: '#0a0a0f',
+              card: '#12141f',
+              cardBorder: '#1e2235',
+              input: '#181b2a',
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body class="bg-dark-bg text-gray-200 font-sans min-h-screen flex flex-col antialiased selection:bg-brand-500 selection:text-white">
+
+  <!-- Top Navigation -->
+  <header class="border-b border-dark-cardBorder bg-dark-card/80 backdrop-blur sticky top-0 z-50">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+      <div class="flex items-center space-x-3">
+        <div class="w-9 h-9 rounded-lg bg-gradient-to-tr from-brand-600 to-violet-500 flex items-center justify-center shadow-lg shadow-brand-500/20 text-white font-black text-xl">
+          ⚡
+        </div>
+        <div>
+          <span class="text-xl font-bold tracking-tight bg-gradient-to-r from-white via-gray-200 to-brand-400 bg-clip-text text-transparent">KasRAI</span>
+          <span class="text-xs text-brand-400 font-mono ml-1.5 px-1.5 py-0.5 rounded bg-brand-500/10 border border-brand-500/20">v0.1.0</span>
+        </div>
+      </div>
+
+      <!-- Tabs -->
+      <nav class="flex space-x-1 sm:space-x-2 bg-dark-input p-1 rounded-xl border border-dark-cardBorder">
+        <button onclick="switchTab('overview')" id="tab-overview" class="tab-btn active px-3 py-1.5 text-xs sm:text-sm font-medium rounded-lg transition-all flex items-center space-x-2">
+          <i class="fa-solid fa-chart-pie"></i>
+          <span class="hidden sm:inline">Обзор</span>
+        </button>
+        <button onclick="switchTab('providers')" id="tab-providers" class="tab-btn px-3 py-1.5 text-xs sm:text-sm font-medium rounded-lg transition-all flex items-center space-x-2">
+          <i class="fa-solid fa-server"></i>
+          <span>Провайдеры & Аккаунты</span>
+        </button>
+        <button onclick="switchTab('routes')" id="tab-routes" class="tab-btn px-3 py-1.5 text-xs sm:text-sm font-medium rounded-lg transition-all flex items-center space-x-2">
+          <i class="fa-solid fa-route"></i>
+          <span>Маршруты & Ротация</span>
+        </button>
+        <button onclick="switchTab('logs')" id="tab-logs" class="tab-btn px-3 py-1.5 text-xs sm:text-sm font-medium rounded-lg transition-all flex items-center space-x-2">
+          <i class="fa-solid fa-list-check"></i>
+          <span>Логи</span>
+        </button>
+        <button onclick="switchTab('playground')" id="tab-playground" class="tab-btn px-3 py-1.5 text-xs sm:text-sm font-medium rounded-lg transition-all flex items-center space-x-2">
+          <i class="fa-solid fa-terminal"></i>
+          <span>Тестер</span>
+        </button>
+      </nav>
+
+      <!-- Status Indicator & Git Updater -->
+      <div class="flex items-center space-x-2 text-xs">
+        <button onclick="checkGitUpdateNow(this)" title="Проверить обновления в Git репозитории" class="px-2 py-1 rounded-lg bg-dark-input hover:bg-dark-cardBorder border border-dark-cardBorder text-gray-300 transition flex items-center space-x-1.5 font-mono">
+          <i class="fa-solid fa-code-branch text-brand-400"></i>
+          <span id="header-git-commit">git: ...</span>
+        </button>
+        <div class="flex items-center space-x-1.5 px-2.5 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400">
+          <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+          <span class="font-mono" id="header-port">PORT 20250</span>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 flex-1 w-full">
+
+    <!-- TAB 1: OVERVIEW -->
+    <section id="view-overview" class="space-y-6">
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div class="bg-dark-card border border-dark-cardBorder rounded-2xl p-5 shadow-sm">
+          <div class="flex items-center justify-between">
+            <span class="text-xs font-medium text-gray-400 uppercase tracking-wider">Провайдеры / Аккаунты</span>
+            <div class="w-8 h-8 rounded-lg bg-indigo-500/10 text-indigo-400 flex items-center justify-center">
+              <i class="fa-solid fa-users-gear"></i>
+            </div>
+          </div>
+          <div class="mt-3 flex items-baseline space-x-2">
+            <span class="text-2xl font-bold" id="stat-active-providers">-</span>
+            <span class="text-xs text-gray-500" id="stat-accounts-detail">(- аккаунтов)</span>
+          </div>
+          <p class="text-xs text-emerald-400 mt-2" id="stat-cooldown-note"><i class="fa-solid fa-circle-check mr-1"></i>0 на паузе (cooldown)</p>
+        </div>
+
+        <div class="bg-dark-card border border-dark-cardBorder rounded-2xl p-5 shadow-sm">
+          <div class="flex items-center justify-between">
+            <span class="text-xs font-medium text-gray-400 uppercase tracking-wider">Маршруты (Ротация)</span>
+            <div class="w-8 h-8 rounded-lg bg-purple-500/10 text-purple-400 flex items-center justify-center">
+              <i class="fa-solid fa-shuffle"></i>
+            </div>
+          </div>
+          <div class="mt-3">
+            <span class="text-2xl font-bold" id="stat-total-routes">-</span>
+          </div>
+          <p class="text-xs text-brand-400 mt-2"><i class="fa-solid fa-arrows-split-up-and-left mr-1"></i>Priority / Round-Robin</p>
+        </div>
+
+        <div class="bg-dark-card border border-dark-cardBorder rounded-2xl p-5 shadow-sm">
+          <div class="flex items-center justify-between">
+            <span class="text-xs font-medium text-gray-400 uppercase tracking-wider">Всего запросов</span>
+            <div class="w-8 h-8 rounded-lg bg-emerald-500/10 text-emerald-400 flex items-center justify-center">
+              <i class="fa-solid fa-bolt"></i>
+            </div>
+          </div>
+          <div class="mt-3 flex items-baseline space-x-2">
+            <span class="text-2xl font-bold" id="stat-total-requests">-</span>
+            <span class="text-xs text-gray-400" id="stat-success-rate">100% OK</span>
+          </div>
+          <p class="text-xs text-gray-400 mt-2" id="stat-failover-count"><i class="fa-solid fa-shield-halved mr-1"></i>0 фоллбеков</p>
+        </div>
+
+        <div class="bg-dark-card border border-dark-cardBorder rounded-2xl p-5 shadow-sm">
+          <div class="flex items-center justify-between">
+            <span class="text-xs font-medium text-gray-400 uppercase tracking-wider">Ср. задержка</span>
+            <div class="w-8 h-8 rounded-lg bg-amber-500/10 text-amber-400 flex items-center justify-center">
+              <i class="fa-solid fa-stopwatch"></i>
+            </div>
+          </div>
+          <div class="mt-3">
+            <span class="text-2xl font-bold" id="stat-avg-latency">- ms</span>
+          </div>
+          <p class="text-xs text-gray-400 mt-2"><i class="fa-solid fa-database mr-1"></i>База: kasdb (msgpack)</p>
+        </div>
+      </div>
+
+      <!-- Quick Integration Snippet -->
+      <div class="bg-dark-card border border-dark-cardBorder rounded-2xl p-6">
+        <h3 class="text-base font-semibold mb-2 flex items-center space-x-2">
+          <i class="fa-solid fa-code text-brand-400"></i>
+          <span>Подключение к локальному шлюзу</span>
+        </h3>
+        <p class="text-sm text-gray-400 mb-4">Шлюз работает на 100% стандарте OpenAI API с умной ротацией аккаунтов и защитой от пустых ответов (APKAKALSA PEDIK 999):</p>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs font-mono">
+          <div class="bg-dark-input border border-dark-cardBorder rounded-xl p-4">
+            <div class="text-gray-400 mb-1">// Python (OpenAI SDK)</div>
+            <pre class="text-brand-400 whitespace-pre-wrap">from openai import OpenAI
+
+client = OpenAI(
+  base_url="http://localhost:20250/v1",
+  api_key="kasrai"  # любой ключ
+)
+
+resp = client.chat.completions.create(
+  model="kasrai/smart",  # или kasrai/fast
+  messages=[{"role": "user", "content": "Привет!"}]
+)
+print(resp.choices[0].message.content)</pre>
+          </div>
+          <div class="bg-dark-input border border-dark-cardBorder rounded-xl p-4">
+            <div class="text-gray-400 mb-1">// cURL (Тест эндпоинта)</div>
+            <pre class="text-emerald-400 whitespace-pre-wrap">curl http://localhost:20250/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "kasrai/smart",
+    "messages": [{"role": "user", "content": "2+2?"}]
+  }'</pre>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 2: PROVIDERS -->
+    <section id="view-providers" class="space-y-6 hidden">
+      <div class="flex items-center justify-between">
+        <div>
+          <h2 class="text-lg font-bold">Провайдеры & Пул Аккаунтов</h2>
+          <p class="text-sm text-gray-400">Встроенный Antigravity + кастомные провайдеры. Поддержка мульти-аккаунтов, OAuth/API Key и настраиваемого КД.</p>
+        </div>
+        <div class="flex flex-wrap items-center gap-2">
+          <button onclick="runModelsRefresh()" class="px-3.5 py-2 bg-dark-input hover:bg-dark-cardBorder border border-dark-cardBorder text-gray-200 rounded-xl text-sm font-medium transition flex items-center space-x-2">
+            <i class="fa-solid fa-layer-group text-brand-400"></i>
+            <span>Чекер моделей</span>
+          </button>
+          <button onclick="resetAllCooldowns()" class="px-3.5 py-2 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 text-amber-300 rounded-xl text-sm font-medium transition flex items-center space-x-2 shadow-sm">
+            <i class="fa-solid fa-snowflake"></i>
+            <span>Сбросить все КД</span>
+          </button>
+          <button onclick="runHealthCheck()" class="px-3.5 py-2 bg-dark-input hover:bg-dark-cardBorder border border-dark-cardBorder text-gray-200 rounded-xl text-sm font-medium transition flex items-center space-x-2">
+            <i class="fa-solid fa-stethoscope text-emerald-400"></i>
+            <span>Чекер здоровья</span>
+          </button>
+          <button onclick="runOmnirouteImport()" class="px-3.5 py-2 bg-dark-input hover:bg-dark-cardBorder border border-dark-cardBorder text-gray-200 rounded-xl text-sm font-medium transition flex items-center space-x-2">
+            <i class="fa-solid fa-file-import text-purple-400"></i>
+            <span>Импорт из OmniRoute</span>
+          </button>
+          <button onclick="openAddProviderModal()" class="px-3.5 py-2 bg-brand-600 hover:bg-brand-500 text-white rounded-xl text-sm font-medium transition shadow-sm flex items-center space-x-2">
+            <i class="fa-solid fa-plus"></i>
+            <span>Добавить провайдер</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Search and Filter Bar -->
+      <div class="bg-dark-card border border-dark-cardBorder rounded-2xl p-4 space-y-3">
+        <div class="flex flex-col sm:flex-row items-center gap-3">
+          <div class="relative flex-1 w-full">
+            <i class="fa-solid fa-magnifying-glass absolute left-3.5 top-3 text-gray-500 text-xs"></i>
+            <input type="text" id="provider-search-input" oninput="onProviderSearch(this.value)" placeholder="Быстрый поиск по названию, email, типу или модели..." class="w-full bg-dark-input border border-dark-cardBorder rounded-xl pl-9 pr-4 py-2 text-sm focus:outline-none focus:border-brand-500 text-gray-200">
+          </div>
+          <div class="text-xs text-gray-400 whitespace-nowrap font-mono" id="provider-matches-count">
+            Всего: 0
+          </div>
+        </div>
+        <div class="flex flex-wrap items-center gap-2 pt-1 border-t border-dark-cardBorder/60" id="provider-filter-chips">
+          <button onclick="setProviderFilter('all')" class="filter-chip active px-3 py-1 rounded-lg text-xs font-medium bg-dark-input border border-dark-cardBorder text-gray-300 transition hover:text-white" data-filter="all">Все</button>
+          <button onclick="setProviderFilter('pro')" class="filter-chip px-3 py-1 rounded-lg text-xs font-medium bg-dark-input border border-dark-cardBorder text-yellow-400 transition hover:text-yellow-300" data-filter="pro">⭐ Google AI Pro</button>
+          <button onclick="setProviderFilter('antigravity')" class="filter-chip px-3 py-1 rounded-lg text-xs font-medium bg-dark-input border border-dark-cardBorder text-indigo-400 transition hover:text-indigo-300" data-filter="antigravity">Antigravity</button>
+          <button onclick="setProviderFilter('hasAccounts')" class="filter-chip px-3 py-1 rounded-lg text-xs font-medium bg-dark-input border border-dark-cardBorder text-gray-300 transition hover:text-white" data-filter="hasAccounts">С аккаунтами</button>
+          <button onclick="setProviderFilter('cooldown')" class="filter-chip px-3 py-1 rounded-lg text-xs font-medium bg-dark-input border border-dark-cardBorder text-amber-400 transition hover:text-amber-300" data-filter="cooldown">⏳ На кулдауне</button>
+          <button onclick="setProviderFilter('invalid')" class="filter-chip px-3 py-1 rounded-lg text-xs font-medium bg-dark-input border border-dark-cardBorder text-rose-400 transition hover:text-rose-300" data-filter="invalid">❌ Ошибки</button>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-6" id="providers-container">
+        <!-- Rendered dynamically -->
+      </div>
+    </section>
+
+    <!-- TAB 3: ROUTES -->
+    <section id="view-routes" class="space-y-6 hidden">
+      <div class="flex items-center justify-between">
+        <div>
+          <h2 class="text-lg font-bold">Виртуальные маршруты & Ротация моделей</h2>
+          <p class="text-sm text-gray-400">Настройка кастомных моделей в API с режимами ротации: Priority, Round-Robin, Least-Used, Random.</p>
+        </div>
+        <button onclick="openAddRouteModal()" class="px-3.5 py-2 bg-brand-600 hover:bg-brand-500 text-white rounded-xl text-sm font-medium transition shadow-sm flex items-center space-x-2">
+          <i class="fa-solid fa-plus"></i>
+          <span>Создать маршрут</span>
+        </button>
+      </div>
+
+      <div class="space-y-4" id="routes-container">
+        <!-- Rendered dynamically -->
+      </div>
+    </section>
+
+    <!-- TAB 4: LOGS -->
+    <section id="view-logs" class="space-y-4 hidden">
+      <div class="flex items-center justify-between">
+        <div>
+          <h2 class="text-lg font-bold">Логи вызовов</h2>
+          <p class="text-sm text-gray-400">История недавних запросов, задержка и сработавшие фоллбеки <span class="text-brand-400 font-medium">(кликните на любой лог для инспекции входящих/исходящих данных)</span>.</p>
+        </div>
+        <div class="flex items-center space-x-3">
+          <button onclick="loadLogs()" class="px-3 py-1.5 bg-dark-input hover:bg-dark-cardBorder border border-dark-cardBorder text-gray-300 rounded-lg text-xs font-medium transition flex items-center space-x-1.5">
+            <i class="fa-solid fa-rotate"></i>
+            <span>Обновить</span>
+          </button>
+          <button onclick="clearAllLogs()" class="px-3 py-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 rounded-lg text-xs font-medium transition flex items-center space-x-1.5">
+            <i class="fa-solid fa-trash"></i>
+            <span>Очистить</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="bg-dark-card border border-dark-cardBorder rounded-2xl overflow-hidden">
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-xs">
+            <thead class="bg-dark-input text-gray-400 uppercase tracking-wider font-semibold border-b border-dark-cardBorder">
+              <tr>
+                <th class="px-4 py-3">Время</th>
+                <th class="px-4 py-3">Запрошенная модель</th>
+                <th class="px-4 py-3">Факт. провайдер / модель</th>
+                <th class="px-4 py-3">Статус</th>
+                <th class="px-4 py-3">Задержка</th>
+                <th class="px-4 py-3">Токены</th>
+                <th class="px-4 py-3">Тип</th>
+                <th class="px-4 py-3 text-right">Инспектор</th>
+              </tr>
+            </thead>
+            <tbody id="logs-table-body" class="divide-y divide-dark-cardBorder text-gray-300 font-mono">
+              <!-- Logs rendered here -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 5: PLAYGROUND -->
+    <section id="view-playground" class="space-y-6 hidden">
+      <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+        <div>
+          <h2 class="text-lg font-bold">Интерактивный тестер</h2>
+          <p class="text-sm text-gray-400">Проверка работы ротации аккаунтов, фоллбеков, Tool Calling и стриминга в реальном времени.</p>
+        </div>
+        <div class="flex items-center space-x-1 bg-dark-input p-1 rounded-xl border border-dark-cardBorder">
+          <button onclick="setPlaygroundMode('single')" id="play-mode-single" class="px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-brand-600 text-white shadow-sm transition">
+            <i class="fa-solid fa-message mr-1.5"></i>Одиночный чат
+          </button>
+          <button onclick="setPlaygroundMode('batch')" id="play-mode-batch" class="px-3.5 py-1.5 rounded-lg text-xs font-semibold text-gray-400 hover:text-white transition">
+            <i class="fa-solid fa-bolt mr-1.5"></i>⚡ Авто-тестер моделей
+          </button>
+        </div>
+      </div>
+
+      <!-- Single Interactive Mode -->
+      <div id="playground-single-container" class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <!-- Input Form -->
+        <div class="bg-dark-card border border-dark-cardBorder rounded-2xl p-6 space-y-4">
+          <div>
+            <div class="flex items-center justify-between mb-1.5">
+              <label class="block text-xs font-semibold text-gray-400 uppercase">Шаблоны запросов (Presets)</label>
+              <span class="text-[11px] text-brand-400 cursor-pointer hover:underline" onclick="applyPlaygroundPreset('tool')">⚡ Попробовать Tool Call</span>
+            </div>
+            <select id="play-preset" onchange="onSelectPreset(this.value)" class="w-full bg-dark-input border border-dark-cardBorder rounded-xl px-3.5 py-2 text-xs focus:outline-none focus:border-brand-500 font-sans text-gray-300">
+              <option value="custom">-- Свой свободный запрос --</option>
+              <option value="hello">Приветствие и представление</option>
+              <option value="math">Логика и математика (с рассуждениями)</option>
+              <option value="tool">Вызов функции (Tool Calling: get_weather)</option>
+              <option value="code">Генерация кода на Python</option>
+            </select>
+          </div>
+
+          <div>
+            <label class="block text-xs font-semibold text-gray-400 uppercase mb-1.5">Модель или Маршрут</label>
+            <select id="play-model" class="w-full bg-dark-input border border-dark-cardBorder rounded-xl px-3.5 py-2.5 text-sm focus:outline-none focus:border-brand-500 font-mono text-gray-200">
+              <!-- Populated dynamically -->
+            </select>
+          </div>
+
+          <div>
+            <label class="block text-xs font-semibold text-gray-400 uppercase mb-1.5">Системный промпт (опционально)</label>
+            <input type="text" id="play-system" placeholder="Ты полезный и умный ИИ-помощник." class="w-full bg-dark-input border border-dark-cardBorder rounded-xl px-3.5 py-2 text-sm focus:outline-none focus:border-brand-500">
+          </div>
+
+          <div>
+            <label class="block text-xs font-semibold text-gray-400 uppercase mb-1.5">Сообщение пользователя</label>
+            <textarea id="play-prompt" rows="4" placeholder="Напиши что-нибудь..." class="w-full bg-dark-input border border-dark-cardBorder rounded-xl px-3.5 py-2.5 text-sm focus:outline-none focus:border-brand-500 resize-none"></textarea>
+          </div>
+
+          <div class="flex flex-wrap items-center justify-between gap-3 pt-2">
+            <div class="flex items-center space-x-4">
+              <label class="flex items-center space-x-2 text-sm cursor-pointer">
+                <input type="checkbox" id="play-stream" checked class="rounded bg-dark-input border-dark-cardBorder text-brand-500 focus:ring-0">
+                <span class="text-xs">Стриминг (SSE)</span>
+              </label>
+
+              <label class="flex items-center space-x-2 text-sm cursor-pointer">
+                <input type="checkbox" id="play-tools" class="rounded bg-dark-input border-dark-cardBorder text-brand-500 focus:ring-0">
+                <span class="text-xs">Mock Tool (get_weather)</span>
+              </label>
+            </div>
+
+            <button onclick="runPlaygroundTest()" id="play-submit-btn" class="px-5 py-2.5 bg-brand-600 hover:bg-brand-500 text-white rounded-xl text-sm font-semibold transition shadow-md flex items-center space-x-2">
+              <i class="fa-solid fa-paper-plane"></i>
+              <span>Отправить</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Output Screen -->
+        <div class="bg-dark-card border border-dark-cardBorder rounded-2xl p-6 flex flex-col">
+          <div class="flex items-center justify-between mb-3">
+            <span class="text-xs font-semibold text-gray-400 uppercase">Ответ модели</span>
+            <div class="flex items-center space-x-2">
+              <span id="play-stats" class="text-[11px] font-mono text-brand-400 px-2 py-0.5 rounded bg-brand-500/10 border border-brand-500/20 hidden"></span>
+              <span id="play-status" class="text-xs font-mono text-gray-500">Ожидание...</span>
+            </div>
+          </div>
+          <div id="play-output" class="flex-1 bg-dark-input border border-dark-cardBorder rounded-xl p-4 font-mono text-sm whitespace-pre-wrap overflow-y-auto min-h-[260px] text-gray-200 selection:bg-brand-500">
+          </div>
+        </div>
+      </div>
+
+      <!-- Batch Auto-Tester Mode -->
+      <div id="playground-batch-container" class="space-y-4 hidden">
+        <div class="bg-dark-card border border-dark-cardBorder rounded-2xl p-5 space-y-4 shadow-sm">
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+              <label class="block text-xs font-semibold text-gray-400 uppercase mb-1.5">Провайдер для тестирования</label>
+              <select id="autotest-provider-select" onchange="onAutotestProviderChange(this.value)" class="w-full bg-dark-input border border-dark-cardBorder rounded-xl px-3.5 py-2 text-sm focus:outline-none focus:border-brand-500 font-mono text-gray-200">
+                <!-- Populated dynamically -->
+              </select>
+            </div>
+            <div class="md:col-span-2">
+              <div class="flex items-center justify-between mb-1.5">
+                <label class="block text-xs font-semibold text-gray-400 uppercase">Тестовое задание</label>
+                <button onclick="generateRandomPonosPrompt()" class="text-[11px] text-brand-400 hover:underline flex items-center space-x-1">
+                  <i class="fa-solid fa-dice"></i>
+                  <span>🎲 Случайный логический поносик</span>
+                </button>
+              </div>
+              <input type="text" id="autotest-prompt" value="Какун варит 3 поносика по 10 минут каждый. Сколько времени займет варка всех трех в одной кастрюле? Ответ в одно предложение." class="w-full bg-dark-input border border-dark-cardBorder rounded-xl px-3.5 py-2 text-sm focus:outline-none focus:border-brand-500 text-gray-200">
+            </div>
+          </div>
+
+          <div class="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-dark-cardBorder/60">
+            <div class="flex items-center space-x-3 text-xs font-mono">
+              <span id="autotest-summary-count" class="text-gray-400">Моделей: 0</span>
+              <span id="autotest-summary-ok" class="text-emerald-400 font-bold hidden">🟢 0 OK</span>
+              <span id="autotest-summary-err" class="text-rose-400 font-bold hidden">🔴 0 Ошибок</span>
+              <span id="autotest-summary-ping" class="text-amber-400 hidden">⏱️ 0ms</span>
+            </div>
+
+            <div class="flex items-center space-x-2">
+              <button onclick="stopBatchAutoTest()" id="autotest-stop-btn" class="px-3.5 py-2 bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 rounded-xl text-xs font-bold transition hidden">
+                <i class="fa-solid fa-stop mr-1"></i>Стоп
+              </button>
+              <button onclick="runBatchAutoTest()" id="autotest-run-btn" class="px-5 py-2 bg-brand-600 hover:bg-brand-500 text-white rounded-xl text-xs font-bold transition shadow-md flex items-center space-x-1.5">
+                <i class="fa-solid fa-play"></i>
+                <span>🚀 Тестировать ВСЕ модели</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Progress Bar -->
+          <div id="autotest-progress-bar-wrap" class="w-full bg-dark-input rounded-full h-1.5 overflow-hidden hidden">
+            <div id="autotest-progress-bar" class="bg-brand-500 h-1.5 rounded-full transition-all duration-300" style="width: 0%"></div>
+          </div>
+        </div>
+
+        <!-- Models Test Grid -->
+        <div id="autotest-grid" class="space-y-2">
+          <!-- Populated dynamically -->
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Provider Settings Modal -->
+  <div id="provider-modal" class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+    <div class="bg-dark-card border border-dark-cardBorder rounded-2xl max-w-lg w-full p-6 space-y-4 shadow-2xl">
+      <div class="flex items-center justify-between border-b border-dark-cardBorder pb-3">
+        <h3 class="text-base font-bold" id="modal-provider-title">Настройки провайдера</h3>
+        <button onclick="closeProviderModal()" class="text-gray-400 hover:text-white"><i class="fa-solid fa-xmark text-lg"></i></button>
+      </div>
+
+      <input type="hidden" id="modal-provider-id">
+
+      <div>
+        <label class="block text-xs font-semibold text-gray-400 uppercase mb-1">Base URL</label>
+        <input type="text" id="modal-provider-url" class="w-full bg-dark-input border border-dark-cardBorder rounded-xl px-3.5 py-2 text-sm font-mono focus:outline-none focus:border-brand-500">
+      </div>
+
+      <div>
+        <label class="block text-xs font-semibold text-gray-400 uppercase mb-1">КД рейта при 429/ошибке (секунды, если не спарсилось)</label>
+        <input type="number" id="modal-provider-cooldown" min="5" max="86400" placeholder="60" class="w-full bg-dark-input border border-dark-cardBorder rounded-xl px-3.5 py-2 text-sm font-mono focus:outline-none focus:border-brand-500">
+        <span class="text-[11px] text-gray-500">Если upstream не прислал Retry-After, аккаунт уйдет в паузу на столько секунд</span>
+      </div>
+
+      <div>
+        <label class="block text-xs font-semibold text-gray-400 uppercase mb-1">Модели (через запятую)</label>
+        <textarea id="modal-provider-models" rows="3" class="w-full bg-dark-input border border-dark-cardBorder rounded-xl px-3.5 py-2 text-sm font-mono focus:outline-none focus:border-brand-500 resize-none"></textarea>
+      </div>
+
+      <div class="flex items-center justify-between pt-2">
+        <label class="flex items-center space-x-2 text-sm cursor-pointer">
+          <input type="checkbox" id="modal-provider-enabled" class="rounded bg-dark-input border-dark-cardBorder text-brand-500">
+          <span>Включить провайдер</span>
+        </label>
+
+        <div class="flex space-x-2">
+          <button onclick="closeProviderModal()" class="px-4 py-2 bg-dark-input hover:bg-dark-cardBorder text-gray-300 rounded-xl text-sm font-medium transition">Отмена</button>
+          <button onclick="saveProviderModal()" class="px-4 py-2 bg-brand-600 hover:bg-brand-500 text-white rounded-xl text-sm font-semibold transition">Сохранить</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add/Edit Account Modal -->
+  <div id="account-modal" class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+    <div class="bg-dark-card border border-dark-cardBorder rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl">
+      <div class="flex items-center justify-between border-b border-dark-cardBorder pb-3">
+        <h3 class="text-base font-bold" id="modal-account-title">Добавить аккаунт</h3>
+        <button onclick="closeAccountModal()" class="text-gray-400 hover:text-white"><i class="fa-solid fa-xmark text-lg"></i></button>
+      </div>
+
+      <input type="hidden" id="modal-acc-provider-id">
+
+      <div>
+        <label class="block text-xs font-semibold text-gray-400 uppercase mb-1">Название / Email</label>
+        <input type="text" id="modal-acc-name" placeholder="напр. dimakukic1@gmail.com или Key #1" class="w-full bg-dark-input border border-dark-cardBorder rounded-xl px-3.5 py-2 text-sm focus:outline-none focus:border-brand-500">
+      </div>
+
+      <div>
+        <label class="block text-xs font-semibold text-gray-400 uppercase mb-1">Тип авторизации</label>
+        <select id="modal-acc-authtype" onchange="toggleAuthFields()" class="w-full bg-dark-input border border-dark-cardBorder rounded-xl px-3.5 py-2 text-sm focus:outline-none focus:border-brand-500 font-mono">
+          <option value="key">API Key</option>
+          <option value="oauth">OAuth Tokens (Google / Antigravity)</option>
+          <option value="cookie">Notion Cookie / token_v2 (Загрузка файла куков или текст)</option>
+        </select>
+      </div>
+
+      <div id="field-api-key">
+        <label class="block text-xs font-semibold text-gray-400 uppercase mb-1">API Key</label>
+        <input type="password" id="modal-acc-key" placeholder="sk-..." class="w-full bg-dark-input border border-dark-cardBorder rounded-xl px-3.5 py-2 text-sm font-mono focus:outline-none focus:border-brand-500">
+      </div>
+
+      <div id="field-cookie" class="space-y-3 hidden">
+        <div>
+          <label class="block text-xs font-semibold text-gray-400 uppercase mb-1">Загрузить файл куков (cookies.txt / JSON)</label>
+          <div class="flex items-center space-x-2">
+            <input type="file" id="modal-acc-cookie-file" onchange="handleCookieFileUpload(event)" accept=".txt,.json" class="block w-full text-xs text-gray-400 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-brand-600/20 file:text-brand-300 hover:file:bg-brand-600/30 file:cursor-pointer">
+          </div>
+          <span class="text-[11px] text-gray-500">Автоматически вытянет token_v2, userId и spaceId из файла!</span>
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-gray-400 uppercase mb-1">Или вставьте сырые куки / JSON</label>
+          <textarea id="modal-acc-cookie-raw" oninput="parseRawCookieInput(this.value)" rows="3" placeholder="token_v2=v03:...; notion_user_id=... или Netscape format или JSON" class="w-full bg-dark-input border border-dark-cardBorder rounded-xl px-3.5 py-2 text-xs font-mono focus:outline-none focus:border-brand-500 resize-none text-gray-300"></textarea>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs font-mono">
+          <div>
+            <label class="block text-[11px] text-gray-400 mb-0.5">token_v2</label>
+            <input type="password" id="modal-acc-tokenv2" placeholder="v03:..." class="w-full bg-dark-bg border border-dark-cardBorder rounded-lg px-2.5 py-1.5 text-xs focus:border-brand-500">
+          </div>
+          <div>
+            <label class="block text-[11px] text-gray-400 mb-0.5">userId (notion_user_id)</label>
+            <input type="text" id="modal-acc-userid" placeholder="3d6d872b-..." class="w-full bg-dark-bg border border-dark-cardBorder rounded-lg px-2.5 py-1.5 text-xs focus:border-brand-500">
+          </div>
+          <div class="sm:col-span-2">
+            <label class="block text-[11px] text-gray-400 mb-0.5">spaceId (Workspace ID)</label>
+            <input type="text" id="modal-acc-spaceid" placeholder="a44e2a3a-..." class="w-full bg-dark-bg border border-dark-cardBorder rounded-lg px-2.5 py-1.5 text-xs focus:border-brand-500">
+          </div>
+        </div>
+      </div>
+
+      <div id="field-oauth" class="space-y-3 hidden">
+        <div>
+          <label class="block text-xs font-semibold text-gray-400 uppercase mb-1">Access Token / Bearer</label>
+          <input type="password" id="modal-acc-oauth-access" placeholder="ya29.a0..." class="w-full bg-dark-input border border-dark-cardBorder rounded-xl px-3.5 py-2 text-sm font-mono focus:outline-none focus:border-brand-500">
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-gray-400 uppercase mb-1">Refresh Token (опционально)</label>
+          <input type="password" id="modal-acc-oauth-refresh" placeholder="1//0g..." class="w-full bg-dark-input border border-dark-cardBorder rounded-xl px-3.5 py-2 text-sm font-mono focus:outline-none focus:border-brand-500">
+        </div>
+      </div>
+
+      <div class="flex justify-end space-x-2 pt-2">
+        <button onclick="closeAccountModal()" class="px-4 py-2 bg-dark-input hover:bg-dark-cardBorder text-gray-300 rounded-xl text-sm font-medium transition">Отмена</button>
+        <button onclick="saveAccountModal()" class="px-4 py-2 bg-brand-600 hover:bg-brand-500 text-white rounded-xl text-sm font-semibold transition">Добавить</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add Custom Provider Modal -->
+  <div id="add-provider-modal" class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+    <div class="bg-dark-card border border-dark-cardBorder rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl">
+      <div class="flex items-center justify-between border-b border-dark-cardBorder pb-3">
+        <h3 class="text-base font-bold">Добавить провайдер</h3>
+        <button onclick="closeAddProviderModal()" class="text-gray-400 hover:text-white"><i class="fa-solid fa-xmark text-lg"></i></button>
+      </div>
+
+      <div>
+        <label class="block text-xs font-semibold text-gray-400 uppercase mb-1">Тип API провайдера</label>
+        <select id="new-prov-preset" onchange="onPresetChange()" class="w-full bg-dark-input border border-dark-cardBorder rounded-xl px-3.5 py-2 text-sm focus:outline-none focus:border-brand-500 font-mono">
+          <option value="openai">OpenAI формат (OpenAI, Groq, OpenRouter, DeepSeek, Ollama)</option>
+          <option value="anthropic">Anthropic формат (Claude Messages API)</option>
+          <option value="gemini">Gemini формат (Google AI Studio)</option>
+          <option value="notion">Notion AI (Reverse Engineered - Десерты)</option>
+        </select>
+      </div>
+
+      <div>
+        <label class="block text-xs font-semibold text-gray-400 uppercase mb-1">ID провайдера</label>
+        <input type="text" id="new-prov-id" placeholder="antigravity-2 или custom-prov" class="w-full bg-dark-input border border-dark-cardBorder rounded-xl px-3.5 py-2 text-sm font-mono focus:outline-none focus:border-brand-500">
+      </div>
+
+      <div>
+        <label class="block text-xs font-semibold text-gray-400 uppercase mb-1">Название</label>
+        <input type="text" id="new-prov-name" placeholder="Antigravity Work" class="w-full bg-dark-input border border-dark-cardBorder rounded-xl px-3.5 py-2 text-sm focus:outline-none focus:border-brand-500">
+      </div>
+
+      <div>
+        <label class="block text-xs font-semibold text-gray-400 uppercase mb-1">Способ авторизации</label>
+        <select id="new-prov-authtype" onchange="onNewProvAuthChange()" class="w-full bg-dark-input border border-dark-cardBorder rounded-xl px-3.5 py-2 text-sm focus:outline-none focus:border-brand-500 font-mono">
+          <option value="key">API Key</option>
+          <option value="oauth">OAuth (Google Авторизация по ссылке)</option>
+        </select>
+      </div>
+
+      <div id="new-prov-key-field">
+        <label class="block text-xs font-semibold text-gray-400 uppercase mb-1">API Key</label>
+        <input type="password" id="new-prov-key" placeholder="sk-..." class="w-full bg-dark-input border border-dark-cardBorder rounded-xl px-3.5 py-2 text-sm font-mono focus:outline-none focus:border-brand-500">
+      </div>
+
+      <div class="flex justify-end space-x-2 pt-2">
+        <button onclick="closeAddProviderModal()" class="px-4 py-2 bg-dark-input hover:bg-dark-cardBorder text-gray-300 rounded-xl text-sm font-medium transition">Отмена</button>
+        <button onclick="saveNewProvider()" class="px-4 py-2 bg-brand-600 hover:bg-brand-500 text-white rounded-xl text-sm font-semibold transition">Создать</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Edit Account Modal -->
+  <div id="edit-account-modal" class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+    <div class="bg-dark-card border border-dark-cardBorder rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl">
+      <div class="flex items-center justify-between border-b border-dark-cardBorder pb-3">
+        <h3 class="text-base font-bold">Настройка аккаунта</h3>
+        <button onclick="closeEditAccountModal()" class="text-gray-400 hover:text-white"><i class="fa-solid fa-xmark text-lg"></i></button>
+      </div>
+
+      <input type="hidden" id="modal-edit-acc-provider-id">
+      <input type="hidden" id="modal-edit-acc-id">
+
+      <div>
+        <label class="block text-xs font-semibold text-gray-400 uppercase mb-1">Название / Email</label>
+        <input type="text" id="modal-edit-acc-name" class="w-full bg-dark-input border border-dark-cardBorder rounded-xl px-3.5 py-2 text-sm focus:outline-none focus:border-brand-500 font-mono">
+      </div>
+
+      <div>
+        <label class="block text-xs font-semibold text-gray-400 uppercase mb-1">Приоритет очереди (чем выше, тем раньше вызывается)</label>
+        <input type="number" id="modal-edit-acc-prio" placeholder="0" class="w-full bg-dark-input border border-dark-cardBorder rounded-xl px-3.5 py-2 text-sm font-mono focus:outline-none focus:border-brand-500">
+        <span class="text-[11px] text-gray-500">Например, 10 пойдёт раньше, чем 0</span>
+      </div>
+
+      <div id="field-edit-acc-key">
+        <label class="block text-xs font-semibold text-gray-400 uppercase mb-1">Сменить API Key</label>
+        <input type="password" id="modal-edit-acc-key" placeholder="Оставьте пустым, чтобы не менять" class="w-full bg-dark-input border border-dark-cardBorder rounded-xl px-3.5 py-2 text-sm font-mono focus:outline-none focus:border-brand-500">
+      </div>
+
+      <div id="field-edit-acc-cookie" class="space-y-3 hidden">
+        <div>
+          <label class="block text-xs font-semibold text-gray-400 uppercase mb-1">Загрузить новый файл куков (.txt / .json)</label>
+          <input type="file" onchange="handleEditCookieFileUpload(event)" accept=".txt,.json" class="block w-full text-xs text-gray-400 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-brand-600/20 file:text-brand-300 hover:file:bg-brand-600/30 file:cursor-pointer">
+        </div>
+        <div class="space-y-2 text-xs font-mono">
+          <div>
+            <label class="block text-[11px] text-gray-400 mb-0.5">token_v2</label>
+            <input type="password" id="modal-edit-acc-tokenv2" placeholder="Оставьте пустым, чтобы не менять" class="w-full bg-dark-bg border border-dark-cardBorder rounded-lg px-2.5 py-1.5 text-xs focus:border-brand-500">
+          </div>
+          <div>
+            <label class="block text-[11px] text-gray-400 mb-0.5">userId (notion_user_id)</label>
+            <input type="text" id="modal-edit-acc-userid" placeholder="userId" class="w-full bg-dark-bg border border-dark-cardBorder rounded-lg px-2.5 py-1.5 text-xs focus:border-brand-500">
+          </div>
+          <div>
+            <label class="block text-[11px] text-gray-400 mb-0.5">spaceId (Workspace ID)</label>
+            <input type="text" id="modal-edit-acc-spaceid" placeholder="spaceId" class="w-full bg-dark-bg border border-dark-cardBorder rounded-lg px-2.5 py-1.5 text-xs focus:border-brand-500">
+          </div>
+        </div>
+      </div>
+
+      <div class="flex justify-end space-x-2 pt-2">
+        <button onclick="closeEditAccountModal()" class="px-4 py-2 bg-dark-input hover:bg-dark-cardBorder text-gray-300 rounded-xl text-sm font-medium transition">Отмена</button>
+        <button onclick="saveEditAccountModal()" class="px-4 py-2 bg-brand-600 hover:bg-brand-500 text-white rounded-xl text-sm font-semibold transition">Сохранить</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Log Details Inspector Modal -->
+  <div id="log-detail-modal" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+    <div class="bg-dark-card border border-dark-cardBorder rounded-2xl max-w-3xl w-full max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
+      <!-- Header -->
+      <div class="px-6 py-4 border-b border-dark-cardBorder flex items-center justify-between bg-dark-input/50">
+        <div class="flex items-center space-x-3">
+          <span id="modal-log-status" class="px-2.5 py-1 rounded-lg text-xs font-mono font-bold">200 OK</span>
+          <div>
+            <h3 class="text-sm font-bold text-white font-mono" id="modal-log-title">Инспектор запроса</h3>
+            <span class="text-[11px] text-gray-400 font-mono" id="modal-log-subtitle"></span>
+          </div>
+        </div>
+        <button onclick="closeLogModal()" class="text-gray-400 hover:text-white p-1"><i class="fa-solid fa-xmark text-lg"></i></button>
+      </div>
+
+      <!-- Body with 3 Tabbed/Card View -->
+      <div class="p-6 overflow-y-auto space-y-4 flex-1 text-xs">
+        <!-- 1. Client Request -->
+        <div class="bg-dark-input border border-dark-cardBorder rounded-xl p-4 space-y-2">
+          <div class="flex items-center justify-between">
+            <span class="font-bold text-gray-300 uppercase tracking-wider flex items-center space-x-1.5">
+              <i class="fa-solid fa-arrow-down-long text-brand-400"></i>
+              <span>1. Входящий запрос (Client Request)</span>
+            </span>
+            <button onclick="copyLogSection('client')" class="text-brand-400 hover:underline flex items-center space-x-1 text-[11px]">
+              <i class="fa-regular fa-copy"></i>
+              <span>Копировать JSON</span>
+            </button>
+          </div>
+          <pre id="modal-log-client" class="bg-dark-bg p-3 rounded-lg overflow-x-auto text-brand-300 max-h-56 whitespace-pre-wrap selection:bg-brand-500 font-mono"></pre>
+        </div>
+
+        <!-- 2. Upstream Request -->
+        <div class="bg-dark-input border border-dark-cardBorder rounded-xl p-4 space-y-2">
+          <div class="flex items-center justify-between">
+            <span class="font-bold text-gray-300 uppercase tracking-wider flex items-center space-x-1.5">
+              <i class="fa-solid fa-arrow-up-long text-purple-400"></i>
+              <span>2. Отправлено в Upstream (Provider Target)</span>
+            </span>
+            <button onclick="copyLogSection('upstream')" class="text-purple-400 hover:underline flex items-center space-x-1 text-[11px]">
+              <i class="fa-regular fa-copy"></i>
+              <span>Копировать JSON</span>
+            </button>
+          </div>
+          <pre id="modal-log-upstream" class="bg-dark-bg p-3 rounded-lg overflow-x-auto text-purple-300 max-h-56 whitespace-pre-wrap selection:bg-brand-500 font-mono"></pre>
+        </div>
+
+        <!-- 3. Upstream Response / Error -->
+        <div class="bg-dark-input border border-dark-cardBorder rounded-xl p-4 space-y-2">
+          <div class="flex items-center justify-between">
+            <span class="font-bold text-gray-300 uppercase tracking-wider flex items-center space-x-1.5">
+              <i class="fa-solid fa-reply text-emerald-400"></i>
+              <span>3. Ответ провайдера (Upstream Output / Error)</span>
+            </span>
+            <button onclick="copyLogSection('response')" class="text-emerald-400 hover:underline flex items-center space-x-1 text-[11px]">
+              <i class="fa-regular fa-copy"></i>
+              <span>Копировать JSON</span>
+            </button>
+          </div>
+          <pre id="modal-log-response" class="bg-dark-bg p-3 rounded-lg overflow-x-auto text-emerald-300 max-h-56 whitespace-pre-wrap selection:bg-brand-500 font-mono"></pre>
+        </div>
+      </div>
+
+      <!-- Footer -->
+      <div class="px-6 py-3 border-t border-dark-cardBorder bg-dark-input/50 flex justify-end">
+        <button onclick="closeLogModal()" class="px-4 py-2 bg-dark-input hover:bg-dark-cardBorder border border-dark-cardBorder text-gray-300 rounded-xl text-xs font-semibold transition">Закрыть</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Container -->
+  <div id="toast-container" class="fixed bottom-5 right-5 z-50 flex flex-col space-y-2 pointer-events-none"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>

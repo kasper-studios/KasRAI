@@ -1,0 +1,16 @@
+# Dependencies
+node_modules/
+package-lock.json
+
+# Persistent Databases & Runtime Data (STRICT: NEVER OVERWRITE)
+data/
+*.db
+*.log
+kasrai.log
+
+# Temporary & Environment files
+.env
+.env.local
+.DS_Store
+*.tmp
+tmp/

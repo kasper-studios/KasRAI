@@ -1,0 +1,27 @@
+{
+  "name": "kasrai",
+  "version": "0.1.0",
+  "description": "Local AI Gateway & Routing Proxy (KasRAI)",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "keywords": [
+    "ai",
+    "gateway",
+    "router",
+    "openai",
+    "proxy",
+    "kasdb"
+  ],
+  "author": "kasperenok",
+  "license": "ISC",
+  "dependencies": {
+    "@kasperenok/kasdb": "^1.0.2",
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
+    "msgpack-lite": "^0.2.2"
+  }
+}
