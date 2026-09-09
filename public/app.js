@@ -1221,7 +1221,30 @@ function onAutotestProviderChange(providerId) {
   document.getElementById('autotest-summary-ok').classList.add('hidden');
   document.getElementById('autotest-summary-err').classList.add('hidden');
   document.getElementById('autotest-summary-ping').classList.add('hidden');
+  document.getElementById('autotest-summary-skipped').classList.add('hidden');
   document.getElementById('autotest-progress-bar-wrap').classList.add('hidden');
+
+  // Load Strategy
+  if (providerId !== 'all') {
+    fetch(`/api/models/states/${providerId}`)
+      .then(r => r.json())
+      .then(data => {
+        if (data.strategy) {
+          const stratSelect = document.getElementById('autotest-strategy-select');
+          if (stratSelect) stratSelect.value = data.strategy;
+        }
+        renderAutotestModelCards(modelsList, data.states || {});
+      })
+      .catch(() => renderAutotestModelCards(modelsList, {}));
+  } else {
+    renderAutotestModelCards(modelsList, {});
+  }
+}
+
+function renderAutotestModelCards(modelsList, statesMap) {
+  const grid = document.getElementById('autotest-grid');
+  if (!grid) return;
+  grid.innerHTML = '';
 
   if (modelsList.length === 0) {
     grid.innerHTML = '<div class="text-xs text-gray-500 italic py-6 text-center bg-dark-card border border-dark-cardBorder rounded-2xl">У выбранного провайдера нет моделей для теста. Нажмите "Чек моделей" во вкладке провайдеров!</div>';
@@ -1231,24 +1254,40 @@ function onAutotestProviderChange(providerId) {
   modelsList.forEach(item => {
     const cleanSafeId = `autotest-card-${item.providerId}-${item.modelId.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
     const card = document.createElement('div');
+    const state = statesMap[item.modelId] || {};
+    const isBroken = state.status === 'broken_404';
+
     card.id = cleanSafeId;
-    card.className = 'bg-dark-card border border-dark-cardBorder hover:border-dark-cardBorder/80 rounded-xl p-3.5 text-xs transition-all space-y-2';
+    card.className = `bg-dark-card border ${isBroken ? 'border-rose-900/40 opacity-75' : 'border-dark-cardBorder hover:border-dark-cardBorder/80'} rounded-xl p-3.5 text-xs transition-all space-y-2`;
+    if (isBroken) card.dataset.broken = 'true';
+
+    let initialBadge = '<span class="model-status-badge px-2 py-0.5 rounded text-[10px] font-mono bg-dark-input text-gray-400 border border-dark-cardBorder">Ожидание...</span>';
+    if (isBroken) {
+      initialBadge = '<span class="model-status-badge px-2 py-0.5 rounded text-[10px] font-mono bg-rose-500/20 text-rose-300 border border-rose-500/30 font-bold">🚫 Нерабочее (404)</span>';
+    } else if (state.status === 'active' && state.successCalls > 0) {
+      initialBadge = `<span class="model-status-badge px-2 py-0.5 rounded text-[10px] font-mono bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-bold">🟢 OK (${state.lastLatencyMs || 0}ms)</span>`;
+    }
+
+    const priorityBadge = `<span class="model-prio-badge px-1.5 py-0.5 rounded text-[10px] font-mono bg-dark-input ${isBroken ? 'text-gray-500' : 'text-brand-400'} border border-dark-cardBorder">P:${isBroken ? 0 : (state.effectivePriority || 50)}</span>`;
 
     card.innerHTML = `
       <div class="flex items-center justify-between">
         <div class="flex items-center space-x-2 truncate mr-3">
           <span class="px-2 py-0.5 rounded bg-dark-input font-mono text-[10px] text-brand-400 border border-dark-cardBorder">[${item.providerId}]</span>
           <span class="font-mono font-bold text-gray-200 truncate" title="${item.modelId}">${item.modelId}</span>
+          ${priorityBadge}
         </div>
         <div class="flex items-center space-x-2 flex-shrink-0">
-          <span class="model-status-badge px-2 py-0.5 rounded text-[10px] font-mono bg-dark-input text-gray-400 border border-dark-cardBorder">Ожидание...</span>
+          ${initialBadge}
           <button onclick="testSingleModel('${item.providerId}', '${item.modelId}', this)" title="Протестировать эту модель" class="px-2.5 py-1 rounded-lg bg-dark-input hover:bg-dark-cardBorder border border-dark-cardBorder text-gray-200 font-medium transition flex items-center space-x-1">
             <i class="fa-solid fa-play text-[10px] text-brand-400"></i>
             <span>Тест</span>
           </button>
         </div>
       </div>
-      <div class="model-preview-box hidden text-[11px] font-mono bg-dark-input p-2.5 rounded-lg border border-dark-cardBorder max-h-32 overflow-y-auto whitespace-pre-wrap selection:bg-brand-500"></div>
+      <div class="model-preview-box ${state.lastError ? '' : 'hidden'} text-[11px] font-mono bg-dark-input p-2.5 rounded-lg border border-dark-cardBorder max-h-32 overflow-y-auto whitespace-pre-wrap selection:bg-brand-500 text-rose-300">
+        ${state.lastError ? escapeHtml(state.lastError) : ''}
+      </div>
     `;
 
     grid.appendChild(card);
@@ -1259,6 +1298,7 @@ async function testSingleModel(providerId, modelId, btn = null) {
   const cleanSafeId = `autotest-card-${providerId}-${modelId.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
   const cardEl = document.getElementById(cleanSafeId);
   const statusBadge = cardEl ? cardEl.querySelector('.model-status-badge') : null;
+  const prioBadge = cardEl ? cardEl.querySelector('.model-prio-badge') : null;
   const previewBox = cardEl ? cardEl.querySelector('.model-preview-box') : null;
   const prompt = document.getElementById('autotest-prompt').value.trim() || 'Скажи тест';
 
@@ -1293,25 +1333,48 @@ async function testSingleModel(providerId, modelId, btn = null) {
         previewBox.classList.remove('hidden');
         previewBox.innerHTML = '<span class="text-purple-300 font-bold">Zero-Token Guard: модель вернула 0 токенов (APKAKALSA PEDIK)</span>';
       }
+      await recordTestResult(providerId, modelId, { ok: false, status: 999, latency });
       return { ok: false, status: 999, latency };
     }
 
     if (!res.ok) {
       const errData = await res.json().catch(() => ({}));
       const errText = errData.error?.message || `HTTP ${res.status}`;
+      const is404 = res.status === 404 || errText.includes('404') || errText.toLowerCase().includes('not found') || errText.toLowerCase().includes('does not exist');
+
       if (statusBadge) {
-        statusBadge.className = 'model-status-badge px-2 py-0.5 rounded text-[10px] font-mono bg-rose-500/10 text-rose-400 border border-rose-500/20';
-        statusBadge.innerText = `🔴 Ошибка (${res.status})`;
+        statusBadge.className = is404
+          ? 'model-status-badge px-2 py-0.5 rounded text-[10px] font-mono bg-rose-500/20 text-rose-300 border border-rose-500/30 font-bold'
+          : 'model-status-badge px-2 py-0.5 rounded text-[10px] font-mono bg-rose-500/10 text-rose-400 border border-rose-500/20';
+        statusBadge.innerText = is404 ? '🚫 Нерабочее (404)' : `🔴 Ошибка (${res.status})`;
+      }
+      if (cardEl && is404) {
+        cardEl.dataset.broken = 'true';
+        cardEl.className = 'bg-dark-card border border-rose-900/40 opacity-75 rounded-xl p-3.5 text-xs transition-all space-y-2';
+        if (prioBadge) {
+          prioBadge.innerText = 'P:0';
+          prioBadge.className = 'model-prio-badge px-1.5 py-0.5 rounded text-[10px] font-mono bg-dark-input text-gray-500 border border-dark-cardBorder';
+        }
       }
       if (previewBox) {
         previewBox.classList.remove('hidden');
         previewBox.innerHTML = `<span class="text-rose-400">${escapeHtml(errText)}</span>`;
       }
-      return { ok: false, status: res.status, error: errText, latency };
+      const updatedState = await recordTestResult(providerId, modelId, { ok: false, status: res.status, error: errText, latency });
+      if (prioBadge && updatedState) {
+        prioBadge.innerText = `P:${updatedState.effectivePriority || 0}`;
+      }
+      return { ok: false, status: res.status, is404, error: errText, latency };
     }
 
     const data = await res.json();
     const content = data.choices?.[0]?.message?.content || (data.choices?.[0]?.message?.tool_calls ? '🛠️ Вызов инструмента' : '[Пустой ответ]');
+
+    // If it was marked as broken before, auto-unmark!
+    if (cardEl) {
+      delete cardEl.dataset.broken;
+      cardEl.className = 'bg-dark-card border border-dark-cardBorder hover:border-dark-cardBorder/80 rounded-xl p-3.5 text-xs transition-all space-y-2';
+    }
 
     if (statusBadge) {
       statusBadge.className = 'model-status-badge px-2 py-0.5 rounded text-[10px] font-mono bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-bold';
@@ -1321,6 +1384,13 @@ async function testSingleModel(providerId, modelId, btn = null) {
       previewBox.classList.remove('hidden');
       previewBox.innerHTML = `<span class="text-gray-300">${escapeHtml(content)}</span>`;
     }
+
+    const updatedState = await recordTestResult(providerId, modelId, { ok: true, status: 200, latency, tokens: data.usage?.total_tokens || 0 });
+    if (prioBadge && updatedState) {
+      prioBadge.innerText = `P:${updatedState.effectivePriority || 50}`;
+      prioBadge.className = 'model-prio-badge px-1.5 py-0.5 rounded text-[10px] font-mono bg-dark-input text-brand-400 border border-dark-cardBorder';
+    }
+
     return { ok: true, status: 200, latency, tokens: data.usage?.total_tokens || 0 };
   } catch (err) {
     const latency = Date.now() - start;
@@ -1332,9 +1402,59 @@ async function testSingleModel(providerId, modelId, btn = null) {
       previewBox.classList.remove('hidden');
       previewBox.innerHTML = `<span class="text-rose-400">${escapeHtml(err.message)}</span>`;
     }
+    await recordTestResult(providerId, modelId, { ok: false, error: err.message, latency });
     return { ok: false, error: err.message, latency };
   } finally {
     if (btn) btn.disabled = false;
+  }
+}
+
+async function recordTestResult(providerId, modelId, result) {
+  try {
+    const res = await fetch('/api/models/test-record', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ providerId, modelId, result }),
+    });
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+async function clearBrokenModelsNow() {
+  const provSelect = document.getElementById('autotest-provider-select');
+  const providerId = provSelect ? provSelect.value : 'antigravity';
+  if (providerId === 'all') {
+    showToast('Выберите конкретного провайдера для снятия флага', 'warning');
+    return;
+  }
+
+  try {
+    const res = await fetch(`/api/models/clear-broken/${providerId}`, { method: 'POST' });
+    const data = await res.json();
+    showToast(`✨ ${data.message || 'Флаги нерабочих моделей сняты'}`, 'success');
+    onAutotestProviderChange(providerId);
+  } catch (err) {
+    showToast('Ошибка снятия флагов: ' + err.message, 'error');
+  }
+}
+
+async function onStrategyChange(strategy) {
+  const provSelect = document.getElementById('autotest-provider-select');
+  const providerId = provSelect ? provSelect.value : 'antigravity';
+  if (providerId === 'all') return;
+
+  try {
+    await fetch(`/api/models/strategy/${providerId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ strategy }),
+    });
+    showToast(`🎯 Стратегия "${strategy}" применена к провайдеру ${providerId}!`, 'info');
+    onAutotestProviderChange(providerId);
+  } catch (err) {
+    showToast('Ошибка смены стратегии: ' + err.message, 'error');
   }
 }
 
@@ -1375,6 +1495,11 @@ async function runBatchAutoTest() {
     }
 
     const card = cards[i];
+    // Skip models already marked as broken_404 during mass run
+    if (card.dataset.broken === 'true') {
+      continue;
+    }
+
     const testBtn = card.querySelector('button');
     const parts = card.id.replace('autotest-card-', '').split('-');
     const providerId = parts[0];
@@ -1395,7 +1520,7 @@ async function runBatchAutoTest() {
 
     okBadge.innerText = `🟢 ${okCount} OK`;
     errBadge.innerText = `🔴 ${errCount} Ошибок`;
-    const avgPing = Math.round(totalLatency / (i + 1));
+    const avgPing = Math.round(totalLatency / (okCount + errCount || 1));
     pingBadge.innerText = `⏱️ ${avgPing}ms`;
   }
 
@@ -1636,6 +1761,90 @@ function escapeHtml(str) {
     .replace(/'/g, '&#039;');
 }
 
+// ==========================================
+// 🛡️ Gateway Auth Modal & Settings
+// ==========================================
+async function openAuthKeyModal() {
+  try {
+    const res = await fetch('/api/auth/config');
+    const data = await res.json();
+    const toggle = document.getElementById('auth-toggle-require');
+    const keyInput = document.getElementById('auth-current-key');
+    const details = document.getElementById('auth-key-details');
+
+    if (toggle) toggle.checked = data.requireApiKey;
+    if (keyInput) keyInput.value = data.hasKey ? (data.maskedKey || 'kasrai-••••••••••••') : 'Ключ не создан';
+    if (details) details.style.opacity = data.requireApiKey ? '1' : '0.6';
+
+    document.getElementById('auth-key-modal').classList.remove('hidden');
+  } catch (err) {
+    showToast('Ошибка загрузки настроек авторизации: ' + err.message, 'error');
+  }
+}
+
+function closeAuthKeyModal() {
+  const modal = document.getElementById('auth-key-modal');
+  if (modal) modal.classList.add('hidden');
+}
+
+async function onToggleRequireAuth(checked) {
+  try {
+    const res = await fetch('/api/auth/toggle', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ requireApiKey: checked }),
+    });
+    const data = await res.json();
+    updateAuthHeaderBadge(data);
+    showToast(checked ? '🔒 Шлюз закрыт на API-ключ!' : '🔓 Шлюз открыт для всех локальных клиентов!', checked ? 'warning' : 'info');
+    openAuthKeyModal();
+  } catch (err) {
+    showToast('Ошибка переключения защиты: ' + err.message, 'error');
+  }
+}
+
+async function generateNewGatewayKey() {
+  try {
+    const res = await fetch('/api/auth/generate-key', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    const data = await res.json();
+    const keyInput = document.getElementById('auth-current-key');
+    if (keyInput) keyInput.value = data.key;
+    updateAuthHeaderBadge(data.config);
+    showToast(`🔑 Сгенерирован новый API-ключ!\nСкопируйте его: ${data.key}`, 'success', 6000);
+  } catch (err) {
+    showToast('Ошибка генерации ключа: ' + err.message, 'error');
+  }
+}
+
+async function loadAuthHeaderState() {
+  try {
+    const res = await fetch('/api/auth/config');
+    const data = await res.json();
+    updateAuthHeaderBadge(data);
+  } catch {}
+}
+
+function updateAuthHeaderBadge(conf) {
+  const btn = document.getElementById('header-auth-btn');
+  const icon = document.getElementById('header-auth-icon');
+  const label = document.getElementById('header-auth-label');
+  if (!btn || !icon || !label) return;
+
+  if (conf.requireApiKey) {
+    icon.className = 'fa-solid fa-lock text-amber-400';
+    label.innerText = 'API: Защищен';
+    btn.className = 'px-2.5 py-1 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-300 transition flex items-center space-x-1.5 font-mono';
+  } else {
+    icon.className = 'fa-solid fa-lock-open text-emerald-400';
+    label.innerText = 'API: Открытый';
+    btn.className = 'px-2.5 py-1 rounded-lg bg-dark-input hover:bg-dark-cardBorder border border-dark-cardBorder text-gray-300 transition flex items-center space-x-1.5 font-mono';
+  }
+}
+
 // Git Updater Check
 async function loadGitStatus() {
   try {
@@ -1685,5 +1894,6 @@ async function checkGitUpdateNow(btn = null) {
 document.addEventListener('DOMContentLoaded', () => {
   loadStatus();
   loadGitStatus();
+  loadAuthHeaderState();
   startLiveCooldownTicker();
 });

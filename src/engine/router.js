@@ -1,6 +1,7 @@
 import { providersDB, routesDB } from '../db/index.js';
 import { createAdapter } from '../adapters/index.js';
 import { accountManager } from './accountManager.js';
+import { modelStateEngine } from './modelStateEngine.js';
 import { logCall } from '../utils/logger.js';
 
 export class RouterEngine {
@@ -32,6 +33,13 @@ export class RouterEngine {
         const provider = providersMap[t.provider];
         if (!provider || !provider.enabled) continue;
 
+        // Skip broken 404 models during routing
+        const mState = await modelStateEngine.getModelState(provider.id, t.model);
+        if (mState.status === 'broken_404') {
+          console.warn(`[Router] Skipping broken (404) target: ${provider.id}/${t.model}`);
+          continue;
+        }
+
         // Fetch viable accounts (excluding those on cooldown)
         const viableAccounts = await accountManager.getViableAccounts(provider.id);
         if (viableAccounts.length > 0) {
@@ -40,11 +48,16 @@ export class RouterEngine {
               provider,
               targetModel: t.model,
               account: acc,
+              modelPriority: mState.effectivePriority || 50,
             });
           }
         }
       }
-      if (candidates.length > 0) return candidates;
+      if (candidates.length > 0) {
+        // Sort candidates by effective model priority DESC
+        candidates.sort((a, b) => (b.modelPriority || 50) - (a.modelPriority || 50));
+        return candidates;
+      }
     }
 
     // 2. Direct provider/model
@@ -53,11 +66,13 @@ export class RouterEngine {
       const targetModel = rest.join('/');
       const provider = providersMap[providerId];
       if (provider && provider.enabled) {
+        const mState = await modelStateEngine.getModelState(provider.id, targetModel);
         const viableAccounts = await accountManager.getViableAccounts(provider.id);
         return viableAccounts.map((acc) => ({
           provider,
           targetModel,
           account: acc,
+          modelPriority: mState.effectivePriority || 50,
         }));
       }
     }
@@ -66,11 +81,14 @@ export class RouterEngine {
     for (const provider of Object.values(providersMap)) {
       if (!provider.enabled) continue;
       if (Array.isArray(provider.models) && provider.models.includes(requestedModel)) {
+        const mState = await modelStateEngine.getModelState(provider.id, requestedModel);
+        if (mState.status === 'broken_404') continue; // Don't auto-match 404 broken models
         const viableAccounts = await accountManager.getViableAccounts(provider.id);
         return viableAccounts.map((acc) => ({
           provider,
           targetModel: requestedModel,
           account: acc,
+          modelPriority: mState.effectivePriority || 50,
         }));
       }
     }

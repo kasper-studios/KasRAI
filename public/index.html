@@ -72,8 +72,12 @@
         </button>
       </nav>
 
-      <!-- Status Indicator & Git Updater -->
+      <!-- Status Indicator, Auth Lock & Git Updater -->
       <div class="flex items-center space-x-2 text-xs">
+        <button onclick="openAuthKeyModal()" id="header-auth-btn" title="Настройки доступа к шлюзу по API-ключу" class="px-2.5 py-1 rounded-lg bg-dark-input hover:bg-dark-cardBorder border border-dark-cardBorder text-gray-300 transition flex items-center space-x-1.5 font-mono">
+          <i class="fa-solid fa-lock-open text-emerald-400" id="header-auth-icon"></i>
+          <span id="header-auth-label">API: Открытый</span>
+        </button>
         <button onclick="checkGitUpdateNow(this)" title="Проверить обновления в Git репозитории" class="px-2 py-1 rounded-lg bg-dark-input hover:bg-dark-cardBorder border border-dark-cardBorder text-gray-300 transition flex items-center space-x-1.5 font-mono">
           <i class="fa-solid fa-code-branch text-brand-400"></i>
           <span id="header-git-commit">git: ...</span>
@@ -409,14 +413,19 @@ print(resp.choices[0].message.content)</pre>
           </div>
 
           <div class="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-dark-cardBorder/60">
-            <div class="flex items-center space-x-3 text-xs font-mono">
+            <div class="flex flex-wrap items-center gap-3 text-xs font-mono">
               <span id="autotest-summary-count" class="text-gray-400">Моделей: 0</span>
               <span id="autotest-summary-ok" class="text-emerald-400 font-bold hidden">🟢 0 OK</span>
               <span id="autotest-summary-err" class="text-rose-400 font-bold hidden">🔴 0 Ошибок</span>
               <span id="autotest-summary-ping" class="text-amber-400 hidden">⏱️ 0ms</span>
+              <span id="autotest-summary-skipped" class="text-gray-500 hidden">⏭️ 0 (404)</span>
             </div>
 
-            <div class="flex items-center space-x-2">
+            <div class="flex flex-wrap items-center gap-2">
+              <button onclick="clearBrokenModelsNow()" id="autotest-clear-broken-btn" title="Снять статус 404 у всех моделей выбранного провайдера" class="px-3 py-1.5 bg-dark-input hover:bg-dark-cardBorder border border-dark-cardBorder text-gray-300 rounded-xl text-xs font-medium transition flex items-center space-x-1.5">
+                <i class="fa-solid fa-rotate-left text-brand-400"></i>
+                <span>Снять флаг нерабочих</span>
+              </button>
               <button onclick="stopBatchAutoTest()" id="autotest-stop-btn" class="px-3.5 py-2 bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 rounded-xl text-xs font-bold transition hidden">
                 <i class="fa-solid fa-stop mr-1"></i>Стоп
               </button>
@@ -425,6 +434,20 @@ print(resp.choices[0].message.content)</pre>
                 <span>🚀 Тестировать ВСЕ модели</span>
               </button>
             </div>
+          </div>
+
+          <!-- Priority Optimization Strategy Selector -->
+          <div class="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-dark-cardBorder/40 text-xs">
+            <div class="flex items-center space-x-2">
+              <i class="fa-solid fa-sliders text-brand-400"></i>
+              <span class="text-gray-400">Стратегия приоритетов моделей:</span>
+            </div>
+            <select id="autotest-strategy-select" onchange="onStrategyChange(this.value)" class="bg-dark-input border border-dark-cardBorder rounded-lg px-2.5 py-1 text-xs font-mono text-gray-200 focus:outline-none focus:border-brand-500">
+              <option value="balanced">Сбалансированная (Balanced)</option>
+              <option value="deep_reasoning">🧠 Глубокие рассуждения в приоритете (Thinking / Pro / Opus)</option>
+              <option value="lowest_latency">⚡ Минимальная задержка (Fast / Flash / Low Latency)</option>
+              <option value="highest_throughput">🚀 Максимальная пропускная способность</option>
+            </select>
           </div>
 
           <!-- Progress Bar -->
@@ -780,6 +803,63 @@ print(resp.choices[0].message.content)</pre>
       <!-- Footer -->
       <div class="px-6 py-3 border-t border-dark-cardBorder bg-dark-input/50 flex justify-end">
         <button onclick="closeQuotaModal()" class="px-4 py-2 bg-dark-input hover:bg-dark-cardBorder border border-dark-cardBorder text-gray-300 rounded-xl text-xs font-semibold transition">Закрыть</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Gateway Auth & API Key Modal -->
+  <div id="auth-key-modal" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+    <div class="bg-dark-card border border-dark-cardBorder rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl">
+      <div class="flex items-center justify-between border-b border-dark-cardBorder pb-3">
+        <div class="flex items-center space-x-2.5">
+          <div class="w-8 h-8 rounded-lg bg-emerald-500/10 text-emerald-400 flex items-center justify-center font-bold">
+            <i class="fa-solid fa-shield-halved"></i>
+          </div>
+          <h3 class="text-base font-bold text-white">Доступ к KasRAI Gateway</h3>
+        </div>
+        <button onclick="closeAuthKeyModal()" class="text-gray-400 hover:text-white p-1"><i class="fa-solid fa-xmark text-lg"></i></button>
+      </div>
+
+      <div class="space-y-4">
+        <!-- Toggle Switch -->
+        <div class="flex items-center justify-between bg-dark-input p-3.5 rounded-xl border border-dark-cardBorder">
+          <div>
+            <span class="block text-xs font-bold text-white">Требовать API-ключ для /v1/*</span>
+            <span class="text-[11px] text-gray-400">Если выключено — шлюз открыт для любых клиентов в локальной сети</span>
+          </div>
+          <label class="relative inline-flex items-center cursor-pointer">
+            <input type="checkbox" id="auth-toggle-require" onchange="onToggleRequireAuth(this.checked)" class="sr-only peer">
+            <div class="w-11 h-6 bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
+          </label>
+        </div>
+
+        <!-- Key Management Area -->
+        <div id="auth-key-details" class="space-y-3">
+          <div>
+            <div class="flex items-center justify-between mb-1">
+              <label class="block text-xs font-semibold text-gray-400 uppercase">Основной API-ключ шлюза</label>
+              <button onclick="generateNewGatewayKey()" class="text-[11px] text-brand-400 hover:underline flex items-center space-x-1">
+                <i class="fa-solid fa-wand-magic-sparkles"></i>
+                <span>Сгенерировать новый</span>
+              </button>
+            </div>
+            <div class="relative">
+              <input type="text" id="auth-current-key" readonly class="w-full bg-dark-bg border border-dark-cardBorder rounded-xl pl-3.5 pr-10 py-2.5 text-xs font-mono text-emerald-400 focus:outline-none">
+              <button onclick="copyToClipboard(document.getElementById('auth-current-key').value, this)" class="absolute right-2.5 top-2 text-gray-400 hover:text-white p-1 text-xs">
+                <i class="fa-regular fa-copy"></i>
+              </button>
+            </div>
+          </div>
+
+          <div class="p-3 rounded-xl bg-dark-input/60 border border-dark-cardBorder text-[11px] text-gray-400 space-y-1">
+            <div class="text-gray-300 font-semibold">Использование в клиентах:</div>
+            <code class="block text-brand-300 bg-dark-bg p-2 rounded text-[10px] overflow-x-auto">Authorization: Bearer &lt;kasrai-key&gt;</code>
+          </div>
+        </div>
+      </div>
+
+      <div class="flex justify-end pt-2 border-t border-dark-cardBorder">
+        <button onclick="closeAuthKeyModal()" class="px-4 py-2 bg-dark-input hover:bg-dark-cardBorder text-gray-300 rounded-xl text-xs font-semibold transition">Закрыть</button>
       </div>
     </div>
   </div>

@@ -8,6 +8,8 @@ import { checkAccountQuota, checkAllQuotas } from '../utils/quotaChecker.js';
 import { validateAccount, validateAllAccounts } from '../utils/accountValidator.js';
 import { checkProviderModels, checkAllProvidersModels } from '../utils/modelChecker.js';
 import { gitUpdater } from '../utils/gitUpdater.js';
+import { modelStateEngine } from '../engine/modelStateEngine.js';
+import { gatewayAuth } from '../engine/gatewayAuth.js';
 import { CONFIG } from '../config.js';
 
 export const apiRouter = express.Router();
@@ -574,6 +576,83 @@ apiRouter.get('/logs/:id', async (req, res) => {
     const log = await getLogById(req.params.id);
     if (!log) return res.status(404).json({ error: 'Log not found' });
     res.json(log);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ==========================================
+// 🛡️ Gateway API Key & Access Protection API
+// ==========================================
+apiRouter.get('/auth/config', async (req, res) => {
+  try {
+    const conf = await gatewayAuth.getAuthConfig();
+    res.json(conf);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+apiRouter.post('/auth/toggle', async (req, res) => {
+  try {
+    const { requireApiKey } = req.body;
+    const conf = await gatewayAuth.setRequireApiKey(requireApiKey);
+    res.json(conf);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+apiRouter.post('/auth/generate-key', async (req, res) => {
+  try {
+    const { name } = req.body;
+    const result = await gatewayAuth.generateNewKey(name);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ==========================================
+// 🎯 Model States & Priority Optimizer API
+// ==========================================
+apiRouter.get('/models/states/:providerId', async (req, res) => {
+  try {
+    const states = await modelStateEngine.getProviderModelStates(req.params.providerId);
+    const strategy = await modelStateEngine.getProviderPriorityStrategy(req.params.providerId);
+    res.json({ states, strategy });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+apiRouter.post('/models/test-record', async (req, res) => {
+  try {
+    const { providerId, modelId, result } = req.body;
+    if (!providerId || !modelId || !result) {
+      return res.status(400).json({ error: 'Missing parameters' });
+    }
+    const state = await modelStateEngine.recordModelTestResult(providerId, modelId, result);
+    res.json(state);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+apiRouter.post('/models/clear-broken/:providerId', async (req, res) => {
+  try {
+    const count = await modelStateEngine.clearBrokenFlags(req.params.providerId);
+    res.json({ ok: true, clearedCount: count, message: `Снят флаг нерабочих моделей (${count} шт.)` });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+apiRouter.post('/models/strategy/:providerId', async (req, res) => {
+  try {
+    const { strategy } = req.body;
+    const setStrategy = await modelStateEngine.setProviderPriorityStrategy(req.params.providerId, strategy);
+    res.json({ ok: true, strategy: setStrategy });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

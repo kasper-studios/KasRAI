@@ -1,9 +1,28 @@
 import express from 'express';
 import { routerEngine } from '../engine/router.js';
 import { providersDB, routesDB } from '../db/index.js';
+import { gatewayAuth } from '../engine/gatewayAuth.js';
 import { CONFIG } from '../config.js';
 
 export const v1Router = express.Router();
+
+// Auth Middleware for /v1/*
+v1Router.use(async (req, res, next) => {
+  // Always allow health check without auth
+  if (req.path === '/health') return next();
+
+  const authResult = await gatewayAuth.validateRequest(req);
+  if (!authResult.valid) {
+    return res.status(authResult.status || 401).json({
+      error: {
+        message: authResult.message || 'Unauthorized',
+        type: 'kasrai_auth_error',
+        code: authResult.status || 401,
+      },
+    });
+  }
+  next();
+});
 
 // Health probe
 v1Router.get('/health', (req, res) => {
