@@ -814,6 +814,7 @@ function openAddProviderModal() {
   document.getElementById('new-prov-id').value = '';
   document.getElementById('new-prov-name').value = '';
   document.getElementById('new-prov-key').value = '';
+  if (document.getElementById('new-prov-cookie-raw')) document.getElementById('new-prov-cookie-raw').value = '';
   document.getElementById('new-prov-preset').value = 'openai';
   document.getElementById('new-prov-authtype').value = 'key';
   onPresetChange();
@@ -828,6 +829,7 @@ function closeAddProviderModal() {
 function onPresetChange() {
   const preset = document.getElementById('new-prov-preset').value;
   const urlInput = document.getElementById('new-prov-url');
+  const authSelect = document.getElementById('new-prov-authtype');
   const defaults = {
     openai: 'https://api.openai.com/v1',
     anthropic: 'https://api.anthropic.com/v1',
@@ -839,18 +841,30 @@ function onPresetChange() {
   if (defaults[preset]) {
     urlInput.value = defaults[preset];
   }
+  // Notion preset uses cookies — auto-switch auth type to cookie
+  if (preset === 'notion' && authSelect) {
+    authSelect.value = 'cookie';
+    onNewProvAuthChange();
+  }
 }
 
 function onNewProvAuthChange() {
   const authType = document.getElementById('new-prov-authtype').value;
   const keyGroup = document.getElementById('group-new-prov-key');
   const oauthGroup = document.getElementById('group-new-prov-oauth');
+  const cookieGroup = document.getElementById('group-new-prov-cookie');
   if (authType === 'key') {
     keyGroup.classList.remove('hidden');
     oauthGroup.classList.add('hidden');
-  } else {
+    cookieGroup.classList.add('hidden');
+  } else if (authType === 'oauth') {
     keyGroup.classList.add('hidden');
     oauthGroup.classList.remove('hidden');
+    cookieGroup.classList.add('hidden');
+  } else {
+    keyGroup.classList.add('hidden');
+    oauthGroup.classList.add('hidden');
+    cookieGroup.classList.remove('hidden');
   }
 }
 
@@ -861,15 +875,35 @@ async function saveNewProvider() {
   const baseURL = document.getElementById('new-prov-url').value.trim();
   const authType = document.getElementById('new-prov-authtype').value;
   const apiKey = document.getElementById('new-prov-key').value.trim();
+  const cookieRaw = document.getElementById('new-prov-cookie-raw')?.value.trim() || '';
 
   if (!id || !name) {
     showToast('Укажите ID и Название провайдера', 'warning');
     return;
   }
 
-  const payload = { id, name, type, baseURL, authType, enabled: true };
+  const payload = { id, name, type, preset: type, baseURL, authType, enabled: true };
   if (authType === 'key' && apiKey) {
     payload.apiKey = apiKey;
+  } else if (authType === 'cookie' && cookieRaw) {
+    // Parse JSON or raw cookie string into {token_v2, user_id, space_id}
+    let cookies = {};
+    try {
+      const trimmed = cookieRaw.trim();
+      if (trimmed.startsWith('{')) {
+        cookies = JSON.parse(trimmed);
+      } else {
+        const tokenMatch = trimmed.match(/token_v2=([^;\s]+)/);
+        if (tokenMatch) cookies.token_v2 = tokenMatch[1];
+        const userMatch = trimmed.match(/notion_user_id=([^;\s]+)/);
+        if (userMatch) cookies.user_id = userMatch[1];
+        const spaceMatch = trimmed.match(/notion_space_id=([^;\s]+)/);
+        if (spaceMatch) cookies.space_id = spaceMatch[1];
+      }
+    } catch {
+      cookies = { raw: cookieRaw };
+    }
+    payload.apiKey = JSON.stringify(cookies);
   }
 
   try {
