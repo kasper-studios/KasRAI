@@ -115,7 +115,9 @@ export class GitUpdater {
       const changedFiles = changedFilesRaw.split('\n').filter(Boolean);
 
       // Perform safe pull (ignoring data/ and preserved untracked DB files)
-      await execAsync(`git merge ${this.remote}/${this.branch} --ff-only`, { cwd: ROOT_DIR });
+      // Use --quiet to suppress progress output that contains \r (carriage returns)
+      // which cause PTY line-overwrite artifacts in tmux
+      await execAsync(`git merge ${this.remote}/${this.branch} --ff-only --quiet`, { cwd: ROOT_DIR });
       this.currentCommit = this.latestRemoteCommit;
 
       console.log(`[GitUpdater] ✅ Pulled ${changedFiles.length} file(s) successfully!`);

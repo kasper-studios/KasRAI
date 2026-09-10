@@ -36,13 +36,30 @@ class KasDBStore {
     return next;
   }
 
+  _isCorrupted(err) {
+    return err.message && (
+      err.message.includes('BUFFER_SHORTAGE') ||
+      err.message.includes('INVALID_TYPE') ||
+      err.message.includes('Unexpected end of buffer') ||
+      err.code === 'ERR_INVALID_ARG_TYPE'
+    );
+  }
+
+  async _resetDb() {
+    console.warn(`[kasdb:${this.name}] ⚠️ Corrupted DB detected — resetting to initial data.`);
+    try { fs.unlinkSync(this.filePath); } catch {}
+    this.db = new AsyncDB({ filename: this.dbPath, data: this.initialData });
+  }
+
   async getAll() {
     return this._lock(async () => {
       try {
         const data = await this.db.getData();
         return data || {};
       } catch (err) {
-        if (err.code === 'ENOENT') {
+        if (err.code === 'ENOENT') return this.initialData;
+        if (this._isCorrupted(err)) {
+          await this._resetDb();
           return this.initialData;
         }
         throw err;
@@ -57,6 +74,10 @@ class KasDBStore {
         return val !== undefined ? val : null;
       } catch (err) {
         if (err.code === 'ENOENT') return null;
+        if (this._isCorrupted(err)) {
+          await this._resetDb();
+          return null;
+        }
         throw err;
       }
     });
