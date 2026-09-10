@@ -1442,18 +1442,47 @@ async function loadPlaygroundModels() {
   try {
     const res = await fetch('/v1/models');
     const data = await res.json();
-    const select = document.getElementById('play-model');
-    select.innerHTML = '';
+    const allModels = (data.data || []).map((m) => ({
+      id: m.id,
+      label: m.id + (m.owned_by === 'kasrai' ? ' [Маршрут]' : ` [${m.owned_by}]`),
+    }));
 
-    (data.data || []).forEach((m) => {
-      const opt = document.createElement('option');
-      opt.value = m.id;
-      opt.innerText = m.id + (m.owned_by === 'kasrai' ? ' [Маршрут]' : ` [${m.owned_by}]`);
-      select.appendChild(opt);
-    });
+    // Store all models for search filtering
+    window._kasraiAllModels = allModels;
+
+    // Render top models initially (routes first, then first 100)
+    renderPlaygroundModelList(allModels.slice(0, 120));
+
+    // Setup search
+    const searchEl = document.getElementById('play-model-search');
+    if (searchEl) {
+      searchEl.addEventListener('input', (e) => {
+        const q = e.target.value.trim().toLowerCase();
+        if (!q) {
+          renderPlaygroundModelList((window._kasraiAllModels || []).slice(0, 120));
+        } else {
+          const filtered = (window._kasraiAllModels || []).filter((m) => m.id.toLowerCase().includes(q));
+          renderPlaygroundModelList(filtered.slice(0, 80));
+        }
+      });
+    }
   } catch (err) {
     console.error('Failed to load models:', err);
   }
+}
+
+function renderPlaygroundModelList(models) {
+  const select = document.getElementById('play-model');
+  if (!select) return;
+  const current = select.value;
+  select.innerHTML = '';
+  models.forEach((m) => {
+    const opt = document.createElement('option');
+    opt.value = m.id;
+    opt.innerText = m.label;
+    if (m.id === current) opt.selected = true;
+    select.appendChild(opt);
+  });
 }
 
 const PONOS_RANDOM_RIDDLES = [
