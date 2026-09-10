@@ -182,7 +182,20 @@ apiRouter.post('/providers', async (req, res) => {
   }
 });
 
-// POST /api/providers/:id/oauth/start - Start OAuth flow for provider
+// GET /api/providers/:id/oauth/authorize - Browser redirect to OAuth provider (used as href link)
+apiRouter.get('/providers/:id/oauth/authorize', (req, res) => {
+  try {
+    const { id } = req.params;
+    const host = req.get('host') || `localhost:${CONFIG.PORT}`;
+    const redirectUri = `http://${host}/oauth/callback`;
+    const oauthData = buildOAuthUrl(id, redirectUri);
+    res.redirect(oauthData.authUrl);
+  } catch (err) {
+    res.status(500).send(`OAuth error: ${err.message}`);
+  }
+});
+
+// POST /api/providers/:id/oauth/start - Start OAuth flow for provider (returns JSON)
 apiRouter.post('/providers/:id/oauth/start', (req, res) => {
   try {
     const { id } = req.params;
