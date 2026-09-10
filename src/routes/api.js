@@ -208,8 +208,8 @@ apiRouter.post('/providers/:id/oauth/start', (req, res) => {
   }
 });
 
-// POST /api/providers/:id - Update provider settings
-apiRouter.post('/providers/:id', async (req, res) => {
+// POST/PUT/PATCH /api/providers/:id - Update provider settings
+const handleUpdateProvider = async (req, res) => {
   try {
     const { id } = req.params;
     const updates = req.body;
@@ -226,7 +226,11 @@ apiRouter.post('/providers/:id', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
-});
+};
+
+apiRouter.post('/providers/:id', handleUpdateProvider);
+apiRouter.put('/providers/:id', handleUpdateProvider);
+apiRouter.patch('/providers/:id', handleUpdateProvider);
 
 // DELETE /api/providers/:id
 apiRouter.delete('/providers/:id', async (req, res) => {
@@ -538,20 +542,25 @@ apiRouter.get('/routes', async (req, res) => {
   }
 });
 
-// POST /api/routes
-apiRouter.post('/routes', async (req, res) => {
+// Helper for saving / updating routes
+const handleSaveRoute = async (req, res) => {
   try {
-    const { alias, description, rotationMode, targets } = req.body;
-    if (!alias || !Array.isArray(targets)) {
-      return res.status(400).json({ error: 'alias and targets array are required' });
+    const rawAlias = req.params[0] || req.params.alias || req.body.alias || req.body.name;
+    if (!rawAlias) {
+      return res.status(400).json({ error: 'Route alias is required' });
     }
+    const alias = decodeURIComponent(rawAlias);
+    const existing = (await routesDB.get(alias)) || {};
 
+    const { description, rotationMode, mode, targets, enabled } = req.body;
     const routeData = {
+      ...existing,
       alias,
-      description: description || '',
-      rotationMode: rotationMode || 'priority',
-      rrIndex: 0,
-      targets,
+      description: description !== undefined ? description : (existing.description || ''),
+      rotationMode: rotationMode || mode || existing.rotationMode || 'priority',
+      rrIndex: existing.rrIndex || 0,
+      targets: Array.isArray(targets) ? targets : (existing.targets || []),
+      enabled: enabled !== undefined ? enabled : (existing.enabled !== false),
       updatedAt: new Date().toISOString(),
     };
 
@@ -560,12 +569,17 @@ apiRouter.post('/routes', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
-});
+};
 
-// DELETE /api/routes/:alias
-apiRouter.delete('/routes/:alias', async (req, res) => {
+apiRouter.post('/routes', handleSaveRoute);
+apiRouter.put('/routes/*', handleSaveRoute);
+apiRouter.patch('/routes/*', handleSaveRoute);
+
+// DELETE /api/routes/*
+apiRouter.delete('/routes/*', async (req, res) => {
   try {
-    const alias = decodeURIComponent(req.params.alias);
+    const rawAlias = req.params[0] || req.params.alias;
+    const alias = decodeURIComponent(rawAlias);
     await routesDB.delete(alias);
     res.json({ success: true });
   } catch (err) {

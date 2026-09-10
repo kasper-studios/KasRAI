@@ -14,7 +14,7 @@ export class RouterEngine {
 
     // 1. Alias in routesDB
     const aliasRoute = routesMap[requestedModel];
-    if (aliasRoute && Array.isArray(aliasRoute.targets) && aliasRoute.targets.length > 0) {
+    if (aliasRoute && aliasRoute.enabled !== false && Array.isArray(aliasRoute.targets) && aliasRoute.targets.length > 0) {
       let targets = [...aliasRoute.targets];
       const mode = aliasRoute.rotationMode || 'priority';
 

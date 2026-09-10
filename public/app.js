@@ -576,45 +576,141 @@ async function deleteAccount(providerId, accId) {
   }
 }
 
+// Toggle Auth fields based on select
+function toggleAuthFields() {
+  const authType = document.getElementById('modal-acc-authtype')?.value || 'key';
+  const keyField = document.getElementById('field-api-key');
+  const cookieField = document.getElementById('field-cookie');
+  const oauthField = document.getElementById('field-oauth');
+
+  if (keyField) keyField.classList.toggle('hidden', authType !== 'key');
+  if (cookieField) cookieField.classList.toggle('hidden', authType !== 'cookie');
+  if (oauthField) oauthField.classList.toggle('hidden', authType !== 'oauth');
+}
+
+// Parse Cookie / Netscape / JSON
+function parseRawCookieInput(val) {
+  if (!val) return;
+  try {
+    if (val.trim().startsWith('{')) {
+      const parsed = JSON.parse(val);
+      if (parsed.token_v2) document.getElementById('modal-acc-tokenv2').value = parsed.token_v2;
+      if (parsed.user_id || parsed.userId) document.getElementById('modal-acc-userid').value = parsed.user_id || parsed.userId;
+      if (parsed.space_id || parsed.spaceId) document.getElementById('modal-acc-spaceid').value = parsed.space_id || parsed.spaceId;
+      return;
+    }
+  } catch {}
+
+  const tokenMatch = val.match(/token_v2=([^;\s]+)/);
+  if (tokenMatch) document.getElementById('modal-acc-tokenv2').value = tokenMatch[1];
+
+  const userMatch = val.match(/notion_user_id=([^;\s]+)/);
+  if (userMatch) document.getElementById('modal-acc-userid').value = userMatch[1];
+}
+
+function handleCookieFileUpload(e) {
+  const file = e.target.files?.[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (evt) => {
+    const text = evt.target.result;
+    document.getElementById('modal-acc-cookie-raw').value = text;
+    parseRawCookieInput(text);
+  };
+  reader.readAsText(file);
+}
+
 // Add Account Modal
 function openAddAccountModal(providerId) {
+  const p = cachedProviders.find((x) => x.id === providerId);
+  const provName = p ? p.name : providerId;
+
   document.getElementById('modal-acc-provider-id').value = providerId;
+  const titleEl = document.getElementById('modal-account-title');
+  if (titleEl) titleEl.innerText = `Добавить в ${provName}`;
   document.getElementById('modal-acc-name').value = '';
   document.getElementById('modal-acc-key').value = '';
-  document.getElementById('modal-acc-prio').value = '0';
+  if (document.getElementById('modal-acc-prio')) document.getElementById('modal-acc-prio').value = '0';
+  if (document.getElementById('modal-acc-oauth-access')) document.getElementById('modal-acc-oauth-access').value = '';
+  if (document.getElementById('modal-acc-oauth-refresh')) document.getElementById('modal-acc-oauth-refresh').value = '';
+  if (document.getElementById('modal-acc-tokenv2')) document.getElementById('modal-acc-tokenv2').value = '';
+  if (document.getElementById('modal-acc-userid')) document.getElementById('modal-acc-userid').value = '';
+  if (document.getElementById('modal-acc-spaceid')) document.getElementById('modal-acc-spaceid').value = '';
+  if (document.getElementById('modal-acc-cookie-raw')) document.getElementById('modal-acc-cookie-raw').value = '';
+
+  const authSelect = document.getElementById('modal-acc-authtype');
+  if (authSelect) {
+    if (p && p.preset === 'notion') {
+      authSelect.value = 'cookie';
+    } else {
+      authSelect.value = 'key';
+    }
+    toggleAuthFields();
+  }
+
   document.getElementById('account-modal').classList.remove('hidden');
 }
 
-function closeAddAccountModal() {
+function closeAccountModal() {
   document.getElementById('account-modal').classList.add('hidden');
 }
+const closeAddAccountModal = closeAccountModal;
 
-async function saveNewAccount() {
+async function saveAccountModal() {
   const providerId = document.getElementById('modal-acc-provider-id').value;
   const name = document.getElementById('modal-acc-name').value.trim();
-  const apiKey = document.getElementById('modal-acc-key').value.trim();
-  const priority = parseInt(document.getElementById('modal-acc-prio').value || '0', 10);
+  const authType = document.getElementById('modal-acc-authtype')?.value || 'key';
+  const priority = parseInt(document.getElementById('modal-acc-prio')?.value || '0', 10);
 
-  if (!name || !apiKey) {
-    showToast('Укажите имя и API-ключ', 'warning');
-    return;
+  let apiKey = '';
+  let oauth = null;
+
+  if (authType === 'key') {
+    apiKey = document.getElementById('modal-acc-key')?.value.trim() || '';
+    if (!apiKey) {
+      showToast('Укажите API-ключ', 'warning');
+      return;
+    }
+  } else if (authType === 'oauth') {
+    const accessToken = document.getElementById('modal-acc-oauth-access')?.value.trim() || '';
+    const refreshToken = document.getElementById('modal-acc-oauth-refresh')?.value.trim() || '';
+    if (!accessToken) {
+      showToast('Укажите Access Token', 'warning');
+      return;
+    }
+    oauth = { accessToken, refreshToken, expiresAt: new Date(Date.now() + 3600 * 1000).toISOString() };
+  } else if (authType === 'cookie') {
+    const tokenV2 = document.getElementById('modal-acc-tokenv2')?.value.trim() || '';
+    const userId = document.getElementById('modal-acc-userid')?.value.trim() || '';
+    const spaceId = document.getElementById('modal-acc-spaceid')?.value.trim() || '';
+    if (!tokenV2) {
+      showToast('Укажите token_v2', 'warning');
+      return;
+    }
+    apiKey = JSON.stringify({ token_v2: tokenV2, user_id: userId, space_id: spaceId });
   }
+
+  const accName = name || (authType === 'key' ? `Key ${Date.now().toString().slice(-4)}` : `${authType.toUpperCase()} Account`);
 
   try {
     const res = await fetch(`/api/providers/${providerId}/accounts`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, apiKey, priority }),
+      body: JSON.stringify({ name: accName, authType, apiKey, oauth, priority }),
     });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    showToast('Аккаунт успешно добавлен в ротацию!', 'success');
-    closeAddAccountModal();
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.error || `HTTP ${res.status}`);
+    }
+    showToast('Ключ / Аккаунт успешно добавлен в ротацию!', 'success');
+    closeAccountModal();
     loadProviders();
     loadStatus();
   } catch (err) {
-    showToast('Ошибка добавления аккаунта: ' + err.message, 'error');
+    showToast('Ошибка добавления: ' + err.message, 'error');
   }
 }
+const saveNewAccount = saveAccountModal;
 
 // Edit Account Modal
 function openEditAccountModal(providerId, accId) {
@@ -679,6 +775,8 @@ function openProviderModal(providerId) {
   document.getElementById('modal-provider-url').value = p.baseURL || '';
   document.getElementById('modal-provider-cooldown').value = p.rateLimitCooldownSec || 60;
   document.getElementById('modal-provider-models').value = Array.isArray(p.models) ? p.models.join(', ') : '';
+  const enabledCheckbox = document.getElementById('modal-provider-enabled');
+  if (enabledCheckbox) enabledCheckbox.checked = p.enabled !== false;
   document.getElementById('provider-modal').classList.remove('hidden');
 }
 
@@ -686,27 +784,30 @@ function closeProviderModal() {
   document.getElementById('provider-modal').classList.add('hidden');
 }
 
-async function saveProviderSettings() {
+async function saveProviderModal() {
   const id = document.getElementById('modal-provider-id').value;
   const baseURL = document.getElementById('modal-provider-url').value.trim();
   const cooldown = parseInt(document.getElementById('modal-provider-cooldown').value || '60', 10);
   const modelsStr = document.getElementById('modal-provider-models').value.trim();
+  const enabled = document.getElementById('modal-provider-enabled') ? document.getElementById('modal-provider-enabled').checked : true;
   const models = modelsStr ? modelsStr.split(',').map((s) => s.trim()).filter(Boolean) : [];
 
   try {
     const res = await fetch(`/api/providers/${id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ baseURL, rateLimitCooldownSec: cooldown, models }),
+      body: JSON.stringify({ baseURL, rateLimitCooldownSec: cooldown, models, enabled }),
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     showToast('Настройки провайдера сохранены!', 'success');
     closeProviderModal();
     loadProviders();
+    loadStatus();
   } catch (err) {
     showToast('Ошибка сохранения: ' + err.message, 'error');
   }
 }
+const saveProviderSettings = saveProviderModal;
 
 // Add Custom Provider
 function openAddProviderModal() {
@@ -979,13 +1080,18 @@ async function saveNewRoute() {
 
 async function toggleRoute(id, currentEnabled) {
   try {
-    await fetch(`/api/routes/${id}`, {
+    const res = await fetch(`/api/routes/${encodeURIComponent(id)}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ enabled: !currentEnabled }),
     });
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.error || `HTTP ${res.status}`);
+    }
     showToast(`Маршрут ${!currentEnabled ? 'активирован' : 'выключен'}`, 'info');
-    loadRoutes();
+    await loadRoutes();
+    loadStatus();
   } catch (err) {
     showToast('Ошибка переключения маршрута: ' + err.message, 'error');
   }
@@ -994,9 +1100,13 @@ async function toggleRoute(id, currentEnabled) {
 async function deleteRoute(id) {
   if (!confirm('Удалить этот маршрут?')) return;
   try {
-    await fetch(`/api/routes/${id}`, { method: 'DELETE' });
+    const res = await fetch(`/api/routes/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.error || `HTTP ${res.status}`);
+    }
     showToast('Маршрут удален', 'info');
-    loadRoutes();
+    await loadRoutes();
     loadStatus();
   } catch (err) {
     showToast('Ошибка удаления: ' + err.message, 'error');

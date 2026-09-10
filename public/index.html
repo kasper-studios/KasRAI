@@ -528,6 +528,12 @@ print(resp.choices[0].message.content)</pre>
       </div>
 
       <div>
+        <label class="block text-xs font-semibold text-gray-400 uppercase mb-1">Приоритет (Priority, 0-100)</label>
+        <input type="number" id="modal-acc-prio" value="0" min="0" max="100" class="w-full bg-dark-input border border-dark-cardBorder rounded-xl px-3.5 py-2 text-sm font-mono focus:outline-none focus:border-brand-500">
+        <span class="text-[11px] text-gray-500">Чем выше число, тем раньше аккаунт выбирается для запросов</span>
+      </div>
+
+      <div>
         <label class="block text-xs font-semibold text-gray-400 uppercase mb-1">Тип авторизации</label>
         <select id="modal-acc-authtype" onchange="toggleAuthFields()" class="w-full bg-dark-input border border-dark-cardBorder rounded-xl px-3.5 py-2 text-sm focus:outline-none focus:border-brand-500 font-mono">
           <option value="key">API Key</option>
