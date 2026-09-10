@@ -2,6 +2,20 @@ import crypto from 'node:crypto';
 import { logsDB } from '../db/index.js';
 import { CONFIG } from '../config.js';
 
+// Truncate large string fields to avoid runaway memory usage
+function truncateField(value, maxLen = 4096) {
+  if (typeof value === 'string' && value.length > maxLen) {
+    return value.slice(0, maxLen) + `… [truncated ${value.length - maxLen} chars]`;
+  }
+  if (typeof value === 'object' && value !== null) {
+    const str = JSON.stringify(value);
+    if (str.length > maxLen) {
+      return { _truncated: true, preview: str.slice(0, maxLen) };
+    }
+  }
+  return value;
+}
+
 export async function logCall(entry) {
   try {
     const logItem = {
@@ -19,9 +33,10 @@ export async function logCall(entry) {
       totalTokens: (entry.promptTokens || 0) + (entry.completionTokens || 0),
       stream: !!entry.stream,
       error: entry.error || null,
-      clientRequest: entry.clientRequest || null,
-      upstreamRequest: entry.upstreamRequest || null,
-      upstreamResponse: entry.upstreamResponse || null,
+      // Truncate potentially huge request/response bodies
+      clientRequest: truncateField(entry.clientRequest || null),
+      upstreamRequest: truncateField(entry.upstreamRequest || null),
+      upstreamResponse: truncateField(entry.upstreamResponse || null),
     };
 
     const current = await logsDB.get('items');
