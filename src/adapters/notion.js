@@ -82,25 +82,121 @@ export class NotionAdapter extends BaseAdapter {
   _convertOpenAIToNotionPayload(requestPayload, upstreamModel) {
     const rawMessages = requestPayload.messages || [];
     const acc = this.account || {};
-    const { spaceId } = extractNotionCookies(acc);
+    const { spaceId, userId } = extractNotionCookies(acc);
 
-    const transcript = [];
+    const traceId    = crypto.randomUUID();
+    const threadId   = crypto.randomUUID();
+    const now        = new Date().toISOString();
+
+    // Transcript always starts with a config block (workflow settings + model)
+    const transcript = [
+      {
+        id: crypto.randomUUID(),
+        type: 'config',
+        value: {
+          type: 'workflow',
+          model: upstreamModel,
+          reasoningEffort: requestPayload.reasoning_effort || 'medium',
+          modelFromUser: true,
+          enableAgentAutomations: false,
+          enableAgentIntegrations: false,
+          enableCustomAgents: false,
+          enableExperimentalIntegrations: false,
+          enableScriptAgent: false,
+          enableScriptAgentAdvanced: false,
+          enableScriptAgentMcpServers: false,
+          enableAgentDiffs: false,
+          enableCsvAttachmentSupport: false,
+          showDatabaseAgentsDiscoverability: false,
+          enableAgentThreadTools: false,
+          enableCrdtOperations: false,
+          enableAgentCardCustomization: false,
+          enableSystemPromptAsPage: false,
+          enableUserSessionContext: false,
+          enableAgentGenerateImage: false,
+          enableMarkdownVNext: true,
+          enableSuggestedEditsTools: false,
+          enableAgentSkillsV2: false,
+          useWebSearch: false,
+          internetAccess: false,
+          isHipaa: false,
+          manageWorkers: false,
+          useReadOnlyMode: false,
+          writerMode: false,
+          isCustomAgent: false,
+          isCustomAgentBuilder: false,
+          isCustomAgentCreate: false,
+          isAgentResearchRequest: false,
+          useCustomAgentDraft: false,
+          isOnboardingAgent: false,
+          isMobile: false,
+          availableConnectors: [],
+          searchScopes: [{ type: 'everything' }],
+          agentMemorySettings: { useMemories: false, excludeChatFromMemories: true },
+        },
+      },
+      // Context block: user identity & surface
+      {
+        id: crypto.randomUUID(),
+        type: 'context',
+        value: {
+          timezone: 'UTC',
+          userId: userId || '',
+          spaceId,
+          surface: 'ai_module',
+          currentDatetime: now,
+        },
+      },
+    ];
+
+    // Convert OpenAI messages — system goes as extra context, user/assistant as user/agent
     for (const msg of rawMessages) {
-      const text = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
+      const text = typeof msg.content === 'string'
+        ? msg.content
+        : Array.isArray(msg.content)
+          ? msg.content.filter(p => p.type === 'text').map(p => p.text).join('\n')
+          : JSON.stringify(msg.content);
+
+      if (msg.role === 'system') {
+        // Inject system prompt as an extra context value
+        transcript[1].value.systemPrompt = text;
+        continue;
+      }
+
+      const type = msg.role === 'assistant' ? 'agent' : 'user';
       transcript.push({
         id: crypto.randomUUID(),
-        type: msg.role === 'assistant' ? 'agent' : (msg.role === 'system' ? 'system' : 'user'),
-        value: text,
+        type,
+        userId: userId || undefined,
+        // Notion expects value as array-of-rich-text: [["text"]]
+        value: [[text]],
+        createdAt: now,
       });
     }
 
     return {
+      traceId,
       spaceId,
-      model: upstreamModel,
-      context: {
-        type: 'chat',
-      },
       transcript,
+      threadId,
+      threadParentPointer: {
+        table: 'space',
+        id: spaceId,
+        spaceId,
+      },
+      createThread: true,
+      generateTitle: false,
+      saveAllThreadOperations: true,
+      setUnreadState: false,
+      createdSource: 'ai_module',
+      threadType: 'workflow',
+      isPartialTranscript: false,
+      asPatchResponse: true,
+      patchResponseVersion: 2,
+      isUserInAnySalesAssistedSpace: false,
+      isSpaceSalesAssisted: false,
+      supportsCustomAgentNudgeTranscriptStep: false,
+      debugOverrides: { emitInferences: false, cachedInferences: {}, annotationInferences: {} },
     };
   }
 

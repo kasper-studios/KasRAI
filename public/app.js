@@ -745,30 +745,57 @@ async function saveAccountModal() {
     }
     oauth = { accessToken, refreshToken, expiresAt: new Date(Date.now() + 3600 * 1000).toISOString() };
   } else if (authType === 'cookie') {
-    const tokenV2 = document.getElementById('modal-acc-tokenv2')?.value.trim() || '';
-    const userId = document.getElementById('modal-acc-userid')?.value.trim() || '';
     const spaceId = document.getElementById('modal-acc-spaceid')?.value.trim() || '';
-    if (!tokenV2) {
-      showToast('Укажите token_v2', 'warning');
+    const cookieRaw = document.getElementById('modal-acc-cookie-raw')?.value.trim() || '';
+
+    if (!cookieRaw) {
+      showToast('Вставьте Netscape-файл куков или скопируйте Cookie-header', 'warning');
       return;
     }
-    const cookieRaw = document.getElementById('modal-acc-cookie-raw')?.value.trim() || '';
+
+    // Build full cookie_header from ANY input format
     let cookieHeader = '';
-    // Rebuild full cookie header from Netscape lines (name<TAB>value pairs at cols 5/6)
     if (cookieRaw.includes('\t')) {
+      // Netscape format: domain\tTRUE\t/\tTRUE\texpiry\tname\tvalue
+      // Some exports have 6 cols (no httpOnly flag), some 7
       const pairs = [];
       for (const line of cookieRaw.split(/\r?\n/)) {
         if (!line || line.startsWith('#')) continue;
         const parts = line.split('\t');
+        // name at index 5, value at 6 (7-col) OR name at 4, value at 5 (6-col)
+        let name, value;
         if (parts.length >= 7) {
-          const name = parts[5].trim();
-          let value = parts[6].trim();
+          name = parts[5].trim(); value = parts[6].trim();
+        } else if (parts.length === 6) {
+          name = parts[4].trim(); value = parts[5].trim();
+        }
+        if (name && value !== undefined) {
           if (value.startsWith('"') && value.endsWith('"')) value = value.slice(1, -1);
-          if (name && value) pairs.push(`${name}=${value}`);
+          pairs.push(`${name}=${value}`);
         }
       }
       cookieHeader = pairs.join('; ');
+    } else if (cookieRaw.toLowerCase().startsWith('cookie:')) {
+      // Raw HTTP header "Cookie: name=value; ..."
+      cookieHeader = cookieRaw.slice(7).trim();
+    } else {
+      // Already "name=value; name2=value2" format
+      cookieHeader = cookieRaw;
     }
+
+    if (!cookieHeader) {
+      showToast('Не удалось разобрать куки. Вставьте Netscape-файл или Cookie-строку.', 'warning');
+      return;
+    }
+
+    // Extract user_id from cookie_header for x-notion-active-user-header
+    const userIdMatch = cookieHeader.match(/(?:notion_user_id|user_id)=([^;]+)/);
+    const userId = userIdMatch ? decodeURIComponent(userIdMatch[1].trim()).replace(/"/g, '') : '';
+
+    // Extract token_v2 just for reference
+    const tokenMatch = cookieHeader.match(/token_v2=([^;]+)/);
+    const tokenV2 = tokenMatch ? tokenMatch[1].trim() : '';
+
     apiKey = JSON.stringify({
       token_v2: tokenV2,
       user_id: userId,
