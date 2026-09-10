@@ -135,18 +135,21 @@ app.use((err, req, res, next) => {
 });
 
 const server = app.listen(CONFIG.PORT, CONFIG.HOST, () => {
-  console.log(`
-╔═══════════════════════════════════════════════════════════╗
-║                      ⚡ KasRAI Gateway ⚡                 ║
-║               Kasper Route AI v${CONFIG.VERSION}                      ║
-╠═══════════════════════════════════════════════════════════╣
-║  • Dashboard UI:  http://${CONFIG.HOST === '0.0.0.0' ? 'localhost' : CONFIG.HOST}:${CONFIG.PORT}/
-║  • OpenAI API:    http://${CONFIG.HOST === '0.0.0.0' ? 'localhost' : CONFIG.HOST}:${CONFIG.PORT}/v1
-║  • Health Probe:  http://${CONFIG.HOST === '0.0.0.0' ? 'localhost' : CONFIG.HOST}:${CONFIG.PORT}/v1/health
-║  • OAuth Return:  http://${CONFIG.HOST === '0.0.0.0' ? 'localhost' : CONFIG.HOST}:${CONFIG.PORT}/oauth/callback
-║  • Data Storage:  ${CONFIG.DATA_DIR} (kasdb)
-╚═══════════════════════════════════════════════════════════╝
-  `);
+  const host = CONFIG.HOST === '0.0.0.0' ? 'localhost' : CONFIG.HOST;
+  const p = CONFIG.PORT;
+  console.log([
+    '',
+    '╔═══════════════════════════════════════════════════════════╗',
+    '║            ** KasRAI Gateway **  v' + CONFIG.VERSION + '               ║',
+    '╠═══════════════════════════════════════════════════════════╣',
+    `║  Dashboard UI:   http://${host}:${p}/`.padEnd(61) + '║',
+    `║  OpenAI API:     http://${host}:${p}/v1`.padEnd(61) + '║',
+    `║  Health Probe:   http://${host}:${p}/v1/health`.padEnd(61) + '║',
+    `║  OAuth Return:   http://${host}:${p}/oauth/callback`.padEnd(61) + '║',
+    `║  Data Storage:   ${CONFIG.DATA_DIR} (kasdb)`.padEnd(61) + '║',
+    '╚═══════════════════════════════════════════════════════════╝',
+    '',
+  ].join('\n'));
 
   // Start auto-updater polling (checks every 60s)
   gitUpdater.startAutoPolling(60000);
