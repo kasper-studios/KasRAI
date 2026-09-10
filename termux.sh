@@ -27,4 +27,16 @@ echo "• Binding to: http://${HOST}:${PORT}"
 echo "• Pure JS runtime (kasdb) — zero native compile required!"
 echo "=========================================="
 
-exec node server.js
+# Auto-restart loop: if server exits with code 0 (GitUpdater FULL RESTART),
+# wait 2s for the port to be released then bring it back up automatically.
+while true; do
+  node --max-old-space-size=256 server.js
+  EXIT_CODE=$?
+  if [ $EXIT_CODE -eq 0 ]; then
+    echo "[KasRAI] Server exited cleanly (restart requested). Restarting in 2s..."
+    sleep 2
+  else
+    echo "[KasRAI] Server crashed (exit $EXIT_CODE). Restarting in 3s..."
+    sleep 3
+  fi
+done
