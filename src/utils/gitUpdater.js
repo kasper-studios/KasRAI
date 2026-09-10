@@ -131,11 +131,12 @@ export class GitUpdater {
       };
 
       if (requiresFullRestart) {
-        console.warn('[GitUpdater] ⚠️ Commit has "REQUIRED FULL RESTART" flag. Scheduling process restart...');
-        // Execute graceful restart via exit code 0 or launcher respawn
+        console.warn('[GitUpdater] ⚠️ Commit has "REQUIRED FULL RESTART" flag. Scheduling process restart in 3s...');
+        // Give the HTTP server time to close its socket before the process exits,
+        // so the next launch doesn't hit EADDRINUSE.
         setTimeout(() => {
           process.exit(0);
-        }, 1500);
+        }, 3000);
       } else {
         console.log('[GitUpdater] ⚡ Safe hot-refresh mode: Server process keeps running!');
       }

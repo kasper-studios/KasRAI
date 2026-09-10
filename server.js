@@ -152,6 +152,17 @@ const server = app.listen(CONFIG.PORT, CONFIG.HOST, () => {
   gitUpdater.startAutoPolling(60000);
 });
 
+// Handle port already in use — log clearly instead of crashing with unhandled throw
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(`[KasRAI] ❌ Port ${CONFIG.PORT} is already in use. Is another instance running?`);
+    console.error(`[KasRAI] Try: kill -9 $(lsof -t -i:${CONFIG.PORT})`);
+  } else {
+    console.error('[KasRAI] Server error:', err.message);
+  }
+  process.exit(1);
+});
+
 const shutdown = () => {
   console.log('\n[KasRAI] Shutting down server...');
   server.close(() => {
