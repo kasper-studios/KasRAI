@@ -156,7 +156,8 @@ const server = app.listen(CONFIG.PORT, CONFIG.HOST, () => {
 server.on('error', (err) => {
   if (err.code === 'EADDRINUSE') {
     console.error(`[KasRAI] ❌ Port ${CONFIG.PORT} is already in use. Is another instance running?`);
-    console.error(`[KasRAI] Try: kill -9 $(lsof -t -i:${CONFIG.PORT})`);
+    // lsof is not available on Termux/Android — use fuser or pkill instead
+    console.error(`[KasRAI] Fix: pkill -f "node server.js"  OR  fuser -k ${CONFIG.PORT}/tcp`);
   } else {
     console.error('[KasRAI] Server error:', err.message);
   }
