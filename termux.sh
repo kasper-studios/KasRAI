@@ -1,9 +1,4 @@
-#!/data/data/com.termux/files/usr/bin/bash
-# Fallback to standard env bash if not in exact Termux bin path
-if [ ! -f /data/data/com.termux/files/usr/bin/bash ]; then
-  #!/usr/bin/env bash
-fi
-
+#!/usr/bin/env bash
 cd "$(dirname "$0")"
 
 # Acquire Termux wakelock so Android doesn't kill gateway when screen is off
