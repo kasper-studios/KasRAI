@@ -591,21 +591,86 @@ function toggleAuthFields() {
 // Parse Cookie / Netscape / JSON
 function parseRawCookieInput(val) {
   if (!val) return;
+
+  const setField = (id, v) => {
+    const el = document.getElementById(id);
+    if (el && v !== undefined && v !== null && v !== '') el.value = v;
+  };
+
+  // 1. JSON
   try {
     if (val.trim().startsWith('{')) {
       const parsed = JSON.parse(val);
-      if (parsed.token_v2) document.getElementById('modal-acc-tokenv2').value = parsed.token_v2;
-      if (parsed.user_id || parsed.userId) document.getElementById('modal-acc-userid').value = parsed.user_id || parsed.userId;
-      if (parsed.space_id || parsed.spaceId) document.getElementById('modal-acc-spaceid').value = parsed.space_id || parsed.spaceId;
+      setField('modal-acc-tokenv2', parsed.token_v2);
+      setField('modal-acc-userid', parsed.user_id || parsed.userId || parsed.notion_user_id);
+      setField('modal-acc-spaceid', parsed.space_id || parsed.spaceId || parsed.notion_space_id);
       return;
     }
   } catch {}
 
-  const tokenMatch = val.match(/token_v2=([^;\s]+)/);
-  if (tokenMatch) document.getElementById('modal-acc-tokenv2').value = tokenMatch[1];
+  const extract = {
+    token_v2: null,
+    notion_user_id: null,
+    notion_space_id: null,
+    notion_site_id: null,
+  };
 
-  const userMatch = val.match(/notion_user_id=([^;\s]+)/);
-  if (userMatch) document.getElementById('modal-acc-userid').value = userMatch[1];
+  // 2. Netscape format: lines with TABs:
+  //    .notion.com  TRUE  /  TRUE  2147483647  token_v2  v03:abc...
+  if (val.includes('\t')) {
+    for (const line of val.split(/\r?\n/)) {
+      if (!line || line.startsWith('#')) continue;
+      const parts = line.split('\t');
+      if (parts.length >= 7) {
+        const name = parts[5].trim();
+        let value = parts[6].trim();
+        if (value.startsWith('"') && value.endsWith('"')) value = value.slice(1, -1);
+        if (name in extract) extract[name] = value;
+      }
+    }
+  }
+
+  // 3. "key=value" (cookie header / raw text)
+  if (extract.token_v2 === null) {
+    const pairs = val.match(/(?:^|[;\s])(token_v2|notion_user_id|notion_space_id|notion_site_id|space_id|user_id)=([^;\s"']+)/g);
+    if (pairs) {
+      for (const p of pairs) {
+        const m = p.trim().match(/^([^=]+)=(.+)$/);
+        if (m) {
+          const name = m[1].trim();
+          const value = m[2].trim();
+          if (value.startsWith('"') && value.endsWith('"')) extract[name] = value.slice(1, -1);
+          else extract[name] = value;
+        }
+      }
+    }
+  }
+
+  // Fallback: bare regex over the whole text
+  if (extract.token_v2 === null) {
+    const tokenMatch = val.match(/token_v2[=:\s]+"?([^"\s;]+)/);
+    if (tokenMatch) extract.token_v2 = tokenMatch[1];
+  }
+  if (extract.notion_user_id === null) {
+    const userMatch = val.match(/notion_user_id[=:\s]+"?([^"\s;]+)/);
+    if (userMatch) extract.notion_user_id = userMatch[1];
+  }
+  if (extract.notion_space_id === null) {
+    const spaceMatch = val.match(/notion_space_id[=:\s]+"?([^"\s;]+)/);
+    if (spaceMatch) extract.notion_space_id = spaceMatch[1];
+    else {
+      const spaceMatch2 = val.match(/space_id[=:\s]+"?([^"\s;]+)/);
+      if (spaceMatch2) extract.notion_space_id = spaceMatch2[1];
+    }
+  }
+
+  setField('modal-acc-tokenv2', extract.token_v2);
+  setField('modal-acc-userid', extract.notion_user_id);
+  setField('modal-acc-spaceid', extract.notion_space_id);
+
+  if (!extract.token_v2 && !val.startsWith('#')) {
+    showToast('⚠️ token_v2 не найден в файле. Ищу куки token_v2 на .notion.com', 'warning');
+  }
 }
 
 function handleCookieFileUpload(e) {
