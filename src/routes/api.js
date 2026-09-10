@@ -237,13 +237,14 @@ apiRouter.post('/providers/:id/accounts', async (req, res) => {
       provider.accounts = [];
     }
 
-    const { name, authType, apiKey, oauth } = req.body;
+    const { name, authType, apiKey, oauth, priority } = req.body;
     const newAccount = {
       id: crypto.randomUUID(),
       name: name || `Account ${provider.accounts.length + 1}`,
       authType: authType || 'key',
       apiKey: apiKey || '',
       oauth: oauth || null,
+      priority: typeof priority === 'number' ? priority : 0,
       status: 'active',
       cooldownUntil: 0,
       cooldownReason: null,
