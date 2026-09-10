@@ -5,12 +5,13 @@ import { getValidAuthToken } from './oauth.js';
  * Extract Notion cookie fields from an account.
  * Supports both:
  *  - legacy layout: account.tokenV2 / account.userId / account.spaceId
- *  - new layout: account.apiKey = JSON string {token_v2, user_id, space_id}
+ *  - new layout: account.apiKey = JSON string {token_v2, user_id, space_id, cookie_header}
  */
 export function extractNotionCookies(account) {
   let tokenV2 = account.tokenV2 || '';
   let userId = account.userId || account.notion_user_id || '';
   let spaceId = account.spaceId || account.notion_space_id || '';
+  let cookieHeader = account.cookieHeader || account.cookie_header || '';
 
   // Try JSON apiKey blob
   if (!tokenV2 && account.apiKey) {
@@ -20,13 +21,14 @@ export function extractNotionCookies(account) {
         tokenV2 = parsed.token_v2 || parsed.tokenV2 || tokenV2;
         userId = parsed.user_id || parsed.userId || parsed.notion_user_id || userId;
         spaceId = parsed.space_id || parsed.spaceId || parsed.notion_space_id || spaceId;
+        cookieHeader = parsed.cookie_header || parsed.cookieHeader || cookieHeader;
       }
     } catch {
       // Not JSON — raw apiKey unused for notion cookies
     }
   }
 
-  return { tokenV2, userId, spaceId };
+  return { tokenV2, userId, spaceId, cookieHeader };
 }
 
 /**

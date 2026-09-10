@@ -752,7 +752,29 @@ async function saveAccountModal() {
       showToast('Укажите token_v2', 'warning');
       return;
     }
-    apiKey = JSON.stringify({ token_v2: tokenV2, user_id: userId, space_id: spaceId });
+    const cookieRaw = document.getElementById('modal-acc-cookie-raw')?.value.trim() || '';
+    let cookieHeader = '';
+    // Rebuild full cookie header from Netscape lines (name<TAB>value pairs at cols 5/6)
+    if (cookieRaw.includes('\t')) {
+      const pairs = [];
+      for (const line of cookieRaw.split(/\r?\n/)) {
+        if (!line || line.startsWith('#')) continue;
+        const parts = line.split('\t');
+        if (parts.length >= 7) {
+          const name = parts[5].trim();
+          let value = parts[6].trim();
+          if (value.startsWith('"') && value.endsWith('"')) value = value.slice(1, -1);
+          if (name && value) pairs.push(`${name}=${value}`);
+        }
+      }
+      cookieHeader = pairs.join('; ');
+    }
+    apiKey = JSON.stringify({
+      token_v2: tokenV2,
+      user_id: userId,
+      space_id: spaceId,
+      cookie_header: cookieHeader,
+    });
   }
 
   const accName = name || (authType === 'key' ? `Key ${Date.now().toString().slice(-4)}` : `${authType.toUpperCase()} Account`);

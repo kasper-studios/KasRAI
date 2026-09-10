@@ -54,16 +54,27 @@ export class NotionAdapter extends BaseAdapter {
 
   _buildHeaders() {
     const acc = this.account || {};
-    const { tokenV2, userId, spaceId } = extractNotionCookies(acc);
+    const { tokenV2, userId, spaceId, cookieHeader } = extractNotionCookies(acc);
+
+    // Prefer the full raw cookie header exported from the browser (includes
+    // notion_browser_id, device_id, __cf_bm etc. required to pass Cloudflare).
+    // Fall back to minimal token_v2+user_id pair.
+    let cookie = cookieHeader;
+    if (!cookie) {
+      cookie = `token_v2=${tokenV2}; notion_user_id=${userId};`;
+    }
 
     return {
       'Host': 'app.notion.com',
+      'Origin': 'https://app.notion.com',
+      'Referer': 'https://app.notion.com/ai',
       'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64; rv:154.0) Gecko/20100101 Firefox/154.0',
       'Content-Type': 'application/json',
       'x-notion-active-user-header': userId,
       'x-notion-space-id': spaceId,
       'notion-client-version': '23.13.20260909.0411',
-      'Cookie': `token_v2=${tokenV2}; notion_user_id=${userId};`,
+      'notion-audit-log-platform': 'web',
+      'Cookie': cookie,
       'Accept': 'application/x-ndjson',
     };
   }
