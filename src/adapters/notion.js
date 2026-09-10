@@ -110,6 +110,8 @@ export class NotionAdapter extends BaseAdapter {
     const headers = this._buildHeaders();
     const payload = this._convertOpenAIToNotionPayload(requestPayload, upstreamModel);
 
+    console.log(`[NotionAdapter] complete → model=${upstreamModel} spaceId=${payload.spaceId?.slice(0,8)} transcript=${payload.transcript?.length} msgs`);
+
     const response = await fetch(url, {
       method: 'POST',
       headers,
@@ -118,6 +120,8 @@ export class NotionAdapter extends BaseAdapter {
 
     if (!response.ok) {
       const errText = await response.text();
+      console.error(`[NotionAdapter] HTTP ${response.status}:`, errText.slice(0, 800));
+      console.error(`[NotionAdapter] Payload:`, JSON.stringify(payload).slice(0, 600));
       let errorData;
       try {
         errorData = JSON.parse(errText);
@@ -208,6 +212,8 @@ export class NotionAdapter extends BaseAdapter {
     const headers = this._buildHeaders();
     const payload = this._convertOpenAIToNotionPayload(requestPayload, upstreamModel);
 
+    console.log(`[NotionAdapter] stream → model=${upstreamModel} spaceId=${payload.spaceId?.slice(0,8)} transcript=${payload.transcript?.length} msgs`);
+
     const response = await fetch(url, {
       method: 'POST',
       headers,
@@ -216,6 +222,8 @@ export class NotionAdapter extends BaseAdapter {
 
     if (!response.ok) {
       const errText = await response.text();
+      console.error(`[NotionAdapter] stream HTTP ${response.status}:`, errText.slice(0, 800));
+      console.error(`[NotionAdapter] Payload:`, JSON.stringify(payload).slice(0, 600));
       let errorData;
       try {
         errorData = JSON.parse(errText);
