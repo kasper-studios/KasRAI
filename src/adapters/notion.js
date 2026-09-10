@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { BaseAdapter } from './base.js';
+import { extractNotionCookies } from '../utils/quotaChecker.js';
 
 export const NOTION_MODEL_ALIASES = {
   // OpenAI Sol & Luna & Terra (GPT-5.6 family)
@@ -53,9 +54,7 @@ export class NotionAdapter extends BaseAdapter {
 
   _buildHeaders() {
     const acc = this.account || {};
-    const userId = acc.userId || '';
-    const spaceId = acc.spaceId || '';
-    const tokenV2 = acc.tokenV2 || this.apiKey || '';
+    const { tokenV2, userId, spaceId } = extractNotionCookies(acc);
 
     return {
       'Host': 'app.notion.com',
@@ -72,7 +71,7 @@ export class NotionAdapter extends BaseAdapter {
   _convertOpenAIToNotionPayload(requestPayload, upstreamModel) {
     const rawMessages = requestPayload.messages || [];
     const acc = this.account || {};
-    const spaceId = acc.spaceId || '';
+    const { spaceId } = extractNotionCookies(acc);
 
     const transcript = [];
     for (const msg of rawMessages) {
