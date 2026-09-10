@@ -1050,7 +1050,12 @@ async function loadLogs() {
   logsOffset = 0;
   try {
     const res = await fetch(`/api/logs?limit=${LOGS_PAGE_SIZE}&offset=0`);
-    const logs = await res.json();
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.error || `HTTP ${res.status}`);
+    }
+    const raw = await res.json();
+    const logs = Array.isArray(raw) ? raw : (raw?.logs || []);
 
     const tbody = document.getElementById('logs-table-body');
     tbody.innerHTML = '';
@@ -1083,7 +1088,12 @@ async function loadMoreLogs() {
     if (btn) btn.disabled = true;
 
     const res = await fetch(`/api/logs?limit=${LOGS_PAGE_SIZE}&offset=${logsOffset}`);
-    const logs = await res.json();
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.error || `HTTP ${res.status}`);
+    }
+    const raw = await res.json();
+    const logs = Array.isArray(raw) ? raw : (raw?.logs || []);
 
     if (!logs || logs.length === 0) {
       document.getElementById('logs-load-more-wrap').classList.add('hidden');
