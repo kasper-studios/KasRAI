@@ -89,6 +89,22 @@ class AccountManager {
       return true;
     });
 
+    // Optimistic fallback: if ALL accounts were filtered out purely by cached modelsQuota,
+    // but we have valid active accounts (no active cooldowns), allow them to attempt!
+    // Google quotas often refresh dynamically or stale cache blocks valid requests.
+    if (viable.length === 0 && accounts.length > 0) {
+      const activeUnfrozen = accounts.filter(acc => {
+        if (acc.status === "disabled" || acc.status === "invalid") return false;
+        if (acc.status === "cooldown" && acc.cooldownUntil && acc.cooldownUntil > now) return false;
+        if (acc.modelCooldowns && acc.modelCooldowns[family] && acc.modelCooldowns[family] > now) return false;
+        return true;
+      });
+      if (activeUnfrozen.length > 0) {
+        console.log(`[AccountManager] 🔄 Optimistic fallback for ${providerId}/${cleanModel}: cached quota was 0%, but trying ${activeUnfrozen.length} active account(s).`);
+        viable.push(...activeUnfrozen);
+      }
+    }
+
     // Sort by priority (higher priority number = first; default 0)
     viable.sort((a, b) => (b.priority || 0) - (a.priority || 0));
 
