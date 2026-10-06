@@ -4,6 +4,21 @@ import { checkAccountQuota } from '../utils/quotaChecker.js';
 
 class AccountManager {
   /**
+   * Helper: determine model family/bucket ('gemini', 'claude', or exact model)
+   */
+  _getModelFamily(modelName) {
+    if (!modelName) return 'default';
+    const clean = modelName.toLowerCase().replace(/^(antigravity|gemini|openai|anthropic)\//i, '').trim();
+    if (clean.includes('claude') || clean.includes('sonnet') || clean.includes('opus')) {
+      return 'claude';
+    }
+    if (clean.includes('gemini') || clean.includes('flash') || clean.includes('pro')) {
+      return 'gemini';
+    }
+    return clean;
+  }
+
+  /**
    * Retrieves an ordered list of viable accounts for a provider.
    * Auto-heals expired cooldowns.
    * If targetModel is passed, checks account model-specific quota/buckets!
@@ -15,16 +30,28 @@ class AccountManager {
     let accounts = Array.isArray(provider.accounts) ? [...provider.accounts] : [];
     let stateChanged = false;
     const now = Date.now();
+    const family = this._getModelFamily(targetModel);
 
-    // Check cooldown expirations
+    // Check cooldown expirations (global & per-family)
     for (const acc of accounts) {
       if (acc.status === 'cooldown') {
         if (acc.cooldownUntil && now >= acc.cooldownUntil) {
-          console.log(`[AccountManager] Cooldown expired for '${acc.name || acc.id}'. Restoring to active.`);
+          console.log(`[AccountManager] Global cooldown expired for '${acc.name || acc.id}'. Restoring to active.`);
           acc.status = 'active';
           acc.cooldownUntil = 0;
           acc.cooldownReason = null;
           stateChanged = true;
+        }
+      }
+
+      // Check per-family cooldowns
+      if (acc.modelCooldowns && typeof acc.modelCooldowns === 'object') {
+        for (const [fam, until] of Object.entries(acc.modelCooldowns)) {
+          if (until && now >= until) {
+            console.log(`[AccountManager] Model family '${fam}' cooldown expired for '${acc.name || acc.id}'.`);
+            delete acc.modelCooldowns[fam];
+            stateChanged = true;
+          }
         }
       }
     }
@@ -34,11 +61,19 @@ class AccountManager {
       await providersDB.set(providerId, provider);
     }
 
-    // Filter active accounts (not in cooldown, not disabled, not model-exhausted)
+    // Filter active accounts (not in global cooldown, and not in model-family cooldown)
     const cleanModel = targetModel ? targetModel.replace(/^(antigravity|gemini|openai|anthropic)\//i, '').trim() : null;
 
     const viable = accounts.filter((acc) => {
-      if (acc.status === 'cooldown' || acc.status === 'disabled' || acc.status === 'invalid') {
+      if (acc.status === 'disabled' || acc.status === 'invalid') {
+        return false;
+      }
+      // If global cooldown is still active, skip
+      if (acc.status === 'cooldown' && acc.cooldownUntil && acc.cooldownUntil > now) {
+        return false;
+      }
+      // Check family-specific cooldown (e.g. only 'gemini' is frozen, but 'claude' is free!)
+      if (acc.modelCooldowns && acc.modelCooldowns[family] && acc.modelCooldowns[family] > now) {
         return false;
       }
       // Check cached model quota if available: if this specific model is 0% and reset is in the future, skip it!
@@ -76,10 +111,8 @@ class AccountManager {
 
   /**
    * Put an account on cooldown after a 429 / quota error.
-   * For antigravity: immediately re-checks real quota via retrieveUserQuota.
-   * If a model bucket is fully exhausted (0%), extends cooldown to resetTime
-   * so the router never wastes a request on a known-dead bucket until the
-   * daily reset (typically ~24h later).
+   * Granular: Freezes ONLY the affected model family ('gemini' or 'claude') for Antigravity,
+   * keeping the other family completely alive!
    */
   async triggerAccountCooldown(providerId, accountId, err, targetModel = null) {
     const provider = await providersDB.get(providerId);
@@ -96,12 +129,12 @@ class AccountManager {
     const configuredSec = provider.rateLimitCooldownSec || provider.defaultCooldownSec || 60;
     let cooldownMs = parsedDelay !== null ? parsedDelay : configuredSec * 1000;
 
-    // 3. For antigravity 429s: immediately fetch real quota to see if the model
-    //    bucket is genuinely exhausted. If so, extend cooldown to the reset time
-    //    so we stop spamming Google every 60s when quota is 0%.
+    const family = this._getModelFamily(targetModel);
+
+    // 3. For antigravity 429s: granular per-family cooldown
     if (providerId === 'antigravity') {
       try {
-        console.log(`[AccountManager] 🔍 429 hit on '${acc.name}' — checking real quota...`);
+        console.log(`[AccountManager] 🔍 429 hit on '${acc.name}' for family '${family}' (${targetModel}) — checking real quota...`);
         const freshQuota = await checkAccountQuota(providerId, acc);
 
         if (freshQuota?.ok && freshQuota.modelsQuota) {
@@ -109,11 +142,11 @@ class AccountManager {
             ? targetModel.replace(/^(antigravity|gemini|openai|anthropic)\//i, '').trim()
             : null;
 
-          // Find the most specific exhausted bucket for this model
           let worstResetTime = null;
 
           for (const [mId, mq] of Object.entries(freshQuota.modelsQuota)) {
-            const modelMatches = !cleanModel || mId === cleanModel || mId.startsWith(cleanModel);
+            const mFam = this._getModelFamily(mId);
+            const modelMatches = mFam === family || (cleanModel && (mId === cleanModel || mId.startsWith(cleanModel)));
             if (modelMatches && mq.remainingFraction === 0 && mq.resetTime) {
               const resetMs = Date.parse(mq.resetTime);
               if (!isNaN(resetMs) && resetMs > Date.now()) {
@@ -129,21 +162,35 @@ class AccountManager {
             const remainingMs = resetMs - Date.now();
             if (remainingMs > cooldownMs) {
               console.warn(
-                `[AccountManager] 📛 Quota genuinely exhausted for '${acc.name}' (${cleanModel || 'all models'}). ` +
+                `[AccountManager] 📛 Quota genuinely exhausted for '${acc.name}' [${family}]. ` +
                 `Extending cooldown to resetTime: ${worstResetTime} (${Math.round(remainingMs / 3600000)}h from now)`
               );
               cooldownMs = remainingMs;
             }
           } else {
-            // Quota is NOT 0 — this was a temporary RPM/burst rate limit, keep short cooldown
-            console.log(`[AccountManager] ⚡ RPM burst limit for '${acc.name}'. Quota still available. Short cooldown: ${Math.round(cooldownMs / 1000)}s`);
+            console.log(`[AccountManager] ⚡ RPM burst limit for '${acc.name}' [${family}]. Short cooldown: ${Math.round(cooldownMs / 1000)}s`);
           }
         }
       } catch (quotaErr) {
         console.warn(`[AccountManager] Quota check after 429 failed (non-fatal): ${quotaErr.message}`);
       }
+
+      // 🧊 GRANULAR COOLDOWN: Freeze ONLY this model family!
+      if (!acc.modelCooldowns) acc.modelCooldowns = {};
+      const untilTime = Date.now() + cooldownMs;
+      acc.modelCooldowns[family] = untilTime;
+
+      console.warn(
+        `[AccountManager] 🧊 Lineage '${family}' on account '${acc.name || acc.id}' put on cooldown for ${Math.round(
+          cooldownMs / 1000
+        )}s (until ${new Date(untilTime).toLocaleTimeString()}). Other model families remain ACTIVE!`
+      );
+
+      await providersDB.set(providerId, provider);
+      return acc;
     }
 
+    // Default global cooldown for other providers
     acc.status = 'cooldown';
     acc.cooldownUntil = Date.now() + cooldownMs;
     acc.cooldownReason = err.message || 'Quota exhausted / 429 Rate limit';

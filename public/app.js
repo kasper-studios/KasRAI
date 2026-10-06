@@ -1270,20 +1270,51 @@ const LOGS_PAGE_SIZE = 50;
 
 function renderLogRow(l, tbody) {
   const tr = document.createElement('tr');
-  tr.className = 'border-b border-dark-cardBorder hover:bg-dark-input/60 transition cursor-pointer group';
+  const isRunning = l.status === 'running';
+  tr.className = `border-b border-dark-cardBorder hover:bg-dark-input/60 transition cursor-pointer group ${
+    isRunning ? 'bg-amber-500/5 animate-pulse' : ''
+  }`;
   tr.onclick = () => openLogModal(l);
 
-  const statusBadge = l.status === 200 || l.statusCode === 200
-    ? '<span class="px-2 py-0.5 rounded text-[10px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-mono">200 OK</span>'
-    : (l.status === 999 || l.statusCode === 999)
-    ? '<span class="px-2 py-0.5 rounded text-[10px] bg-purple-500/20 text-purple-300 border border-purple-500/40 font-mono font-bold" title="Zero-Token Guard">💩 999</span>'
-    : `<span class="px-2 py-0.5 rounded text-[10px] bg-rose-500/10 text-rose-400 border border-rose-500/20 font-mono">${l.statusCode || l.status}</span>`;
+  let statusBadge = '';
+  if (isRunning) {
+    statusBadge = `
+      <span class="px-2 py-0.5 rounded text-[10px] bg-amber-500/20 text-amber-300 border border-amber-500/40 font-mono font-bold flex items-center gap-1.5 w-max">
+        <i class="fa-solid fa-spinner fa-spin text-amber-400"></i>
+        <span>ВЫСИРАЕТСЯ...</span>
+      </span>
+    `;
+  } else if (l.status === 200 || l.statusCode === 200) {
+    statusBadge = '<span class="px-2 py-0.5 rounded text-[10px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-mono">200 OK</span>';
+  } else if (l.status === 999 || l.statusCode === 999) {
+    statusBadge = '<span class="px-2 py-0.5 rounded text-[10px] bg-purple-500/20 text-purple-300 border border-purple-500/40 font-mono font-bold" title="Zero-Token Guard">💩 999</span>';
+  } else {
+    statusBadge = `<span class="px-2 py-0.5 rounded text-[10px] bg-rose-500/10 text-rose-400 border border-rose-500/20 font-mono">${l.statusCode || l.status}</span>`;
+  }
 
   const typeBadge = l.stream
     ? '<span class="text-[10px] font-mono text-purple-400">stream</span>'
     : '<span class="text-[10px] font-mono text-gray-500">sync</span>';
 
   const time = new Date(l.timestamp).toLocaleTimeString();
+
+  // Live Timer or Static Latency
+  const latencyHtml = isRunning
+    ? `<span class="font-mono text-amber-400 font-bold live-stopwatch" data-start="${l.startTime || Date.now()}">${((Date.now() - (l.startTime || Date.now())) / 1000).toFixed(1)}s</span>`
+    : `<span class="font-mono text-amber-400">${l.latencyMs}ms</span>`;
+
+  // Tokens: Prompt (in) vs Completion (out)
+  let tokensHtml = '-';
+  if (l.promptTokens || l.completionTokens) {
+    tokensHtml = `
+      <span class="inline-flex items-center gap-1 text-[11px]" title="Контекст: 📥 ${l.promptTokens || 0} входящих / 📤 ${l.completionTokens || 0} сгенерировано">
+        <span class="text-emerald-400 font-bold">📥 ${l.promptTokens || 0}</span>
+        ${l.completionTokens ? `<span class="text-gray-500">/</span> <span class="text-indigo-400">📤 ${l.completionTokens}</span>` : ''}
+      </span>
+    `;
+  } else if (l.totalTokens || l.tokens) {
+    tokensHtml = `<span class="font-mono text-gray-400">${l.totalTokens || l.tokens}</span>`;
+  }
 
   tr.innerHTML = `
     <td class="px-4 py-3 font-mono text-gray-400">${time}</td>
@@ -1292,8 +1323,8 @@ function renderLogRow(l, tbody) {
       <span class="text-brand-400">[${l.routedProvider || '-'}]</span> ${l.routedModel || '-'}
     </td>
     <td class="px-4 py-3">${statusBadge}</td>
-    <td class="px-4 py-3 font-mono text-amber-400">${l.latencyMs}ms</td>
-    <td class="px-4 py-3 font-mono text-gray-400">${l.totalTokens || l.tokens || 0}</td>
+    <td class="px-4 py-3">${latencyHtml}</td>
+    <td class="px-4 py-3 font-mono">${tokensHtml}</td>
     <td class="px-4 py-3">${typeBadge}</td>
     <td class="px-4 py-3 text-right">
       <span class="px-2 py-1 bg-dark-card border border-dark-cardBorder rounded text-brand-400 group-hover:bg-brand-600 group-hover:text-white transition text-[10px]">
@@ -1304,7 +1335,25 @@ function renderLogRow(l, tbody) {
   tbody.appendChild(tr);
 }
 
-async function loadLogs() {
+// Global live stopwatch ticker for running requests
+setInterval(() => {
+  document.querySelectorAll('.live-stopwatch').forEach((el) => {
+    const start = parseInt(el.getAttribute('data-start') || '0', 10);
+    if (start > 0) {
+      const elapsed = ((Date.now() - start) / 1000).toFixed(1);
+      el.textContent = `${elapsed}s`;
+    }
+  });
+}, 500);
+
+// Auto-refresh logs every 2.5 seconds when looking at Logs tab
+setInterval(() => {
+  if (currentTab === 'logs') {
+    loadLogs(true); // silent refresh
+  }
+}, 2500);
+
+async function loadLogs(silent = false) {
   logsOffset = 0;
   try {
     const res = await fetch(`/api/logs?limit=${LOGS_PAGE_SIZE}&offset=0`);

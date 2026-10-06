@@ -2,7 +2,8 @@ import { providersDB, routesDB } from '../db/index.js';
 import { createAdapter } from '../adapters/index.js';
 import { accountManager } from './accountManager.js';
 import { modelStateEngine } from './modelStateEngine.js';
-import { logCall } from '../utils/logger.js';
+import { logCall, startActiveRequest, updateActiveRequest, finishActiveRequest } from '../utils/logger.js';
+import crypto from 'node:crypto';
 
 export class RouterEngine {
   /**
@@ -140,11 +141,34 @@ export class RouterEngine {
 
     const errors = [];
     const startTime = Date.now();
+    const requestId = crypto.randomUUID();
 
-    for (let i = 0; i < candidates.length; i++) {
+    // Estimate input prompt tokens from text length (~4 chars per token)
+    let estimatedPromptTokens = 0;
+    if (Array.isArray(requestPayload.messages)) {
+      for (const m of requestPayload.messages) {
+        if (typeof m.content === 'string') estimatedPromptTokens += Math.ceil(m.content.length / 4);
+      }
+    }
+
+    startActiveRequest(requestId, {
+      requestedModel,
+      stream: isStream,
+      clientRequest: requestPayload,
+      promptTokens: estimatedPromptTokens,
+    });
+
+    try {
+      for (let i = 0; i < candidates.length; i++) {
       const candidate = candidates[i];
       const attemptStart = Date.now();
       const adapter = createAdapter(candidate.provider, candidate.account);
+
+      updateActiveRequest(requestId, {
+        routedProvider: candidate.provider.id,
+        routedModel: candidate.targetModel,
+        accountName: candidate.account?.name || candidate.account?.id || 'default',
+      });
 
       try {
         console.log(
@@ -154,11 +178,12 @@ export class RouterEngine {
         );
 
         if (isStream) {
-          await adapter.stream(requestPayload, candidate.targetModel, res);
+          const streamResult = await adapter.stream(requestPayload, candidate.targetModel, res);
 
           const latencyMs = Date.now() - attemptStart;
           await accountManager.recordAccountSuccess(candidate.provider.id, candidate.account.id, latencyMs);
           await logCall({
+            requestId,
             requestedModel,
             routedProvider: candidate.provider.id,
             routedModel: candidate.targetModel,
@@ -166,6 +191,8 @@ export class RouterEngine {
             status: i > 0 ? 'fallback' : 'success',
             statusCode: 200,
             latencyMs,
+            promptTokens: streamResult?.promptTokens || estimatedPromptTokens,
+            completionTokens: streamResult?.completionTokens || 0,
             stream: true,
             clientRequest: requestPayload,
             upstreamRequest: {
@@ -182,6 +209,7 @@ export class RouterEngine {
           const latencyMs = Date.now() - attemptStart;
           await accountManager.recordAccountSuccess(candidate.provider.id, candidate.account.id, latencyMs);
           await logCall({
+            requestId,
             requestedModel,
             routedProvider: candidate.provider.id,
             routedModel: candidate.targetModel,
@@ -189,7 +217,7 @@ export class RouterEngine {
             status: i > 0 ? 'fallback' : 'success',
             statusCode: 200,
             latencyMs,
-            promptTokens: responseData.usage?.prompt_tokens || 0,
+            promptTokens: responseData.usage?.prompt_tokens || estimatedPromptTokens,
             completionTokens: responseData.usage?.completion_tokens || 0,
             stream: false,
             clientRequest: requestPayload,
@@ -216,6 +244,7 @@ export class RouterEngine {
         if (err.message === 'APKAKALSA PEDIK' || err.status === 999) {
           console.error('[Router] 💩 APKAKALSA PEDIK: Upstream returned 0 tokens!');
           await logCall({
+            requestId,
             requestedModel,
             routedProvider: candidate.provider.id,
             routedModel: candidate.targetModel,
@@ -277,6 +306,7 @@ export class RouterEngine {
     const finalErrMsg = `All ${candidates.length} routing candidate(s) failed for '${requestedModel}': ${errors.join('; ')}`;
 
     await logCall({
+      requestId,
       requestedModel,
       status: 'error',
       statusCode: 502,
@@ -304,7 +334,10 @@ export class RouterEngine {
         },
       });
     }
+  } finally {
+    finishActiveRequest(requestId);
   }
+}
 }
 
 export const routerEngine = new RouterEngine();

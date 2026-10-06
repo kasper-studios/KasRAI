@@ -233,9 +233,10 @@ botRouter.get('/quota', async (req, res) => {
           ? `${q.quota.remainingPercent}%`
           : q.quota.usage !== undefined
           ? `$${q.quota.usage.toFixed(4)}`
-          : 'OK';
+          : q.quota.subscriptionTier || 'OK';
       const reset = q.quota.resetTime ? ` (сброс в ${new Date(q.quota.resetTime).toLocaleTimeString()})` : '';
-      return `• **${q.providerId}** (\`${q.accountName}\`): **${remaining}**${reset}`;
+      const extra = q.quota.activeModels !== undefined ? ` [${q.quota.activeModels} моделей OK]` : '';
+      return `• **${q.providerId}** (\`${q.accountName}\`): **${remaining}**${reset}${extra}`;
     });
 
     const discordEmbed = {
@@ -300,10 +301,18 @@ botRouter.post('/cooldowns/reset', async (req, res) => {
       if (Array.isArray(p.accounts)) {
         let changed = false;
         for (const a of p.accounts) {
+          let wasReset = false;
           if (a.status === 'cooldown') {
             a.status = 'active';
             a.cooldownUntil = 0;
             a.cooldownReason = null;
+            wasReset = true;
+          }
+          if (a.modelCooldowns && Object.keys(a.modelCooldowns).length > 0) {
+            a.modelCooldowns = {};
+            wasReset = true;
+          }
+          if (wasReset) {
             resetCount++;
             changed = true;
           }

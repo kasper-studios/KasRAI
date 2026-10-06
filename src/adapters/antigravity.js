@@ -51,9 +51,17 @@ export class AntigravityAdapter extends BaseAdapter {
   constructor(providerConfig, activeAccount = null) {
     super(providerConfig);
     this.account = activeAccount;
-    if (!this.baseURL || this.baseURL === 'https://cloudcode-pa.googleapis.com') {
-      this.baseURL = ANTIGRAVITY_BASE_URLS[0];
-    }
+    this._customBaseURL = (!super.baseURL || super.baseURL === 'https://cloudcode-pa.googleapis.com')
+      ? ANTIGRAVITY_BASE_URLS[0]
+      : super.baseURL;
+  }
+
+  get baseURL() {
+    return this._customBaseURL || super.baseURL || ANTIGRAVITY_BASE_URLS[0];
+  }
+
+  set baseURL(val) {
+    this._customBaseURL = val;
   }
 
   _resolveUpstreamModel(model) {
@@ -68,6 +76,95 @@ export class AntigravityAdapter extends BaseAdapter {
       return await getValidAuthToken(this.id, this.account);
     }
     return this.apiKey || '';
+  }
+
+  _sanitizeJsonSchema(schema) {
+    if (!schema || typeof schema !== 'object' || Array.isArray(schema)) {
+      return { type: 'object', properties: {} };
+    }
+
+    function cleanNode(node) {
+      if (!node || typeof node !== 'object' || Array.isArray(node)) {
+        return node;
+      }
+
+      const out = { ...node };
+
+      // Strip OpenAPI 3.0 fields that violate JSON Schema Draft 2020-12
+      delete out.nullable;
+      delete out.$schema;
+      delete out.definitions;
+      delete out.$defs;
+
+      // Ensure valid type or combinators
+      if (!out.type && !out.anyOf && !out.oneOf && !out.allOf && !out.enum && !out.$ref) {
+        out.type = 'string';
+      }
+
+      // If array, ensure items is valid
+      if (out.type === 'array') {
+        if (!out.items || typeof out.items !== 'object') {
+          out.items = { type: 'string' };
+        } else {
+          out.items = cleanNode(out.items);
+        }
+      }
+
+      // If object, clean properties and required
+      if (out.properties && typeof out.properties === 'object' && !Array.isArray(out.properties)) {
+        const cleanedProps = {};
+        for (const [key, prop] of Object.entries(out.properties)) {
+          cleanedProps[key] = cleanNode(prop);
+        }
+        out.properties = cleanedProps;
+
+        if (Array.isArray(out.required)) {
+          out.required = out.required.filter((r) => typeof r === 'string' && out.properties[r]);
+          if (out.required.length === 0) {
+            delete out.required;
+          }
+        } else {
+          delete out.required;
+        }
+      }
+
+      // Handle combinators (anyOf, oneOf, allOf) — Anthropic Cloud Code rejects top-level unions on properties
+      for (const comb of ['anyOf', 'oneOf']) {
+        if (Array.isArray(out[comb]) && out[comb].length > 0) {
+          const validBranches = out[comb]
+            .map((item) => cleanNode(item))
+            .filter((item) => item && item.type !== 'null');
+
+          if (validBranches.length > 0) {
+            const primary = validBranches[0];
+            out.type = primary.type || 'string';
+            if (primary.items) out.items = primary.items;
+            if (primary.properties) out.properties = primary.properties;
+            if (primary.enum) out.enum = primary.enum;
+          } else {
+            out.type = 'string';
+          }
+          delete out[comb];
+        }
+      }
+
+      if (Array.isArray(out.allOf)) {
+        delete out.allOf;
+        if (!out.type) out.type = 'string';
+      }
+
+      return out;
+    }
+
+    const clean = cleanNode(schema);
+    if (clean.type !== 'object') {
+      clean.type = 'object';
+    }
+    if (!clean.properties || typeof clean.properties !== 'object') {
+      clean.properties = {};
+    }
+
+    return clean;
   }
 
   _convertOpenAIToAntigravity(requestPayload, targetModel) {
@@ -123,6 +220,7 @@ export class AntigravityAdapter extends BaseAdapter {
               functionResponse: {
                 name: fnName,
                 response: respObj,
+                id: msg.tool_call_id || msg.id || 'call_default',
               },
             },
           ],
@@ -327,22 +425,47 @@ export class AntigravityAdapter extends BaseAdapter {
 
     // Convert tools if provided
     if (Array.isArray(requestPayload.tools) && requestPayload.tools.length > 0) {
+      import('node:fs').then((fs) => {
+        try {
+          fs.writeFileSync(
+            '/data/data/com.termux/files/home/KasRAI/all_tools_debug.json',
+            JSON.stringify(requestPayload.tools, null, 2)
+          );
+        } catch {}
+      });
       const functionDeclarations = [];
-      for (const tool of requestPayload.tools) {
+      for (let tIdx = 0; tIdx < requestPayload.tools.length; tIdx++) {
+        const tool = requestPayload.tools[tIdx];
+        let rawParams = null;
+        let tName = '';
+        let tDesc = '';
+
         if (tool.type === 'function' && tool.function) {
-          const fn = tool.function;
-          functionDeclarations.push({
-            name: fn.name,
-            description: fn.description || '',
-            parameters: fn.parameters || { type: 'object', properties: {} },
-          });
+          tName = tool.function.name;
+          tDesc = tool.function.description || '';
+          rawParams = tool.function.parameters;
         } else if (tool.name) {
-          functionDeclarations.push({
-            name: tool.name,
-            description: tool.description || '',
-            parameters: tool.parameters || tool.input_schema || { type: 'object', properties: {} },
+          tName = tool.name;
+          tDesc = tool.description || '';
+          rawParams = tool.parameters || tool.input_schema;
+        }
+
+        if (tIdx === 10) {
+          import('node:fs').then((fs) => {
+            try {
+              fs.writeFileSync(
+                '/data/data/com.termux/files/home/KasRAI/tool10_debug.json',
+                JSON.stringify({ name: tName, description: tDesc, rawParams }, null, 2)
+              );
+            } catch {}
           });
         }
+
+        functionDeclarations.push({
+          name: tName,
+          description: tDesc,
+          parameters: this._sanitizeJsonSchema(rawParams),
+        });
       }
       if (functionDeclarations.length > 0) {
         innerRequest.tools = [{ functionDeclarations }];
@@ -375,6 +498,28 @@ export class AntigravityAdapter extends BaseAdapter {
     const upstreamModel = this._resolveUpstreamModel(targetModel);
     const inner = this._convertOpenAIToAntigravity(requestPayload, upstreamModel);
     const isGoogleCloudCode = this.baseURL.includes('cloudcode-pa.googleapis.com');
+
+    // 💾 Авто-дамп полного запроса для Opus в отдельный файл
+    if (upstreamModel.includes('opus') || (targetModel && targetModel.includes('opus'))) {
+      import('node:fs').then((fs) => {
+        try {
+          const dumpData = {
+            timestamp: new Date().toISOString(),
+            targetModel,
+            upstreamModel,
+            clientRequest: requestPayload,
+            upstreamEnvelopeRequest: inner,
+          };
+          fs.writeFileSync(
+            '/data/data/com.termux/files/home/KasRAI/opus_request_dump.json',
+            JSON.stringify(dumpData, null, 2)
+          );
+          console.log('[Antigravity] 💾 Полный дамп запроса Opus сохранен в opus_request_dump.json!');
+        } catch (e) {
+          console.error('[Antigravity] Ошибка сохранения дампа Opus:', e.message);
+        }
+      });
+    }
 
     if (isGoogleCloudCode) {
       const projectId = this.account?.projectId || this.account?.oauth?.projectId || 'aicode-consumers';

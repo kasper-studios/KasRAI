@@ -98,6 +98,21 @@ npm install --omit=dev
 
 ---
 
+## 🔗 Google OAuth on Remote Device / Tablet / Cloud
+
+If your main KasRAI is hosted on another device (such as an Android tablet in Termux, Raspberry Pi, or remote VPS), Google OAuth blocks direct redirects to private LAN IPs (`192.168.x.x`) and demands `localhost`.
+
+To bypass this without manual URL editing, run the lightweight **KasRAI OAuth Relay** on your local machine:
+
+```bash
+# Run relay pointing to your main KasRAI host:
+KASRAI_HOST="192.168.1.102:20250" node bin/kasrai-oauth-relay.js
+```
+
+Google will safely redirect back to `http://localhost:20250/oauth/callback`, and the relay will transparently forward the auth tokens directly to your main KasRAI server!
+
+---
+
 ## 💡 Usage Examples
 
 ### Python (Official `openai` SDK):

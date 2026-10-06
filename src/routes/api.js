@@ -350,10 +350,18 @@ apiRouter.post('/cooldowns/reset', async (req, res) => {
       if (Array.isArray(p.accounts)) {
         let changed = false;
         for (const a of p.accounts) {
+          let wasReset = false;
           if (a.status === 'cooldown' || (a.cooldownUntil && a.cooldownUntil > 0)) {
             a.status = 'active';
             a.cooldownUntil = 0;
             a.cooldownReason = null;
+            wasReset = true;
+          }
+          if (a.modelCooldowns && Object.keys(a.modelCooldowns).length > 0) {
+            a.modelCooldowns = {};
+            wasReset = true;
+          }
+          if (wasReset) {
             resetCount++;
             changed = true;
           }

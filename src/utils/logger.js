@@ -16,7 +16,44 @@ function truncateField(value, maxLen = 4096) {
   return value;
 }
 
+// In-memory active (in-flight) requests tracker for live UI display
+const activeRequests = new Map();
+
+export function startActiveRequest(id, data) {
+  activeRequests.set(id, {
+    id,
+    timestamp: new Date().toISOString(),
+    startTime: Date.now(),
+    requestedModel: data.requestedModel || 'unknown',
+    routedProvider: data.routedProvider || 'pending...',
+    routedModel: data.routedModel || 'pending...',
+    accountName: data.accountName || null,
+    status: 'running',
+    statusCode: 0,
+    latencyMs: 0,
+    promptTokens: data.promptTokens || 0,
+    completionTokens: 0,
+    totalTokens: 0,
+    stream: !!data.stream,
+    clientRequest: truncateField(data.clientRequest || null),
+  });
+}
+
+export function updateActiveRequest(id, patch) {
+  const item = activeRequests.get(id);
+  if (item) {
+    Object.assign(item, patch);
+  }
+}
+
+export function finishActiveRequest(id) {
+  activeRequests.delete(id);
+}
+
 export async function logCall(entry) {
+  if (entry.requestId) {
+    finishActiveRequest(entry.requestId);
+  }
   try {
     const logItem = {
       id: crypto.randomUUID(),
@@ -57,6 +94,17 @@ export async function logCall(entry) {
 export async function getRecentLogs(limit = 100, offset = 0) {
   const current = await logsDB.get('items');
   const items = Array.isArray(current) ? current : [];
+
+  // Prepend currently active (in-flight) requests when viewing the first page (offset === 0)
+  if (offset === 0 && activeRequests.size > 0) {
+    const now = Date.now();
+    const activeList = Array.from(activeRequests.values()).map((a) => ({
+      ...a,
+      latencyMs: now - a.startTime,
+    }));
+    return [...activeList, ...items.slice(0, Math.max(0, limit - activeList.length))];
+  }
+
   return items.slice(offset, offset + limit);
 }
 
