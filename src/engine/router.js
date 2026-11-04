@@ -178,7 +178,66 @@ export class RouterEngine {
         );
 
         if (isStream) {
-          const streamResult = await adapter.stream(requestPayload, candidate.targetModel, res);
+          // Wrap stream with deferred response handling: don't commit headers to client
+          // until the first byte/chunk actually arrives from upstream!
+          // If first chunk takes >= 60s, abort and rotate to next candidate account!
+          let clientHeadersCommitted = false;
+          let firstChunkTimer = null;
+          const streamAbortController = new AbortController();
+
+          // Intercept proxy response object passed to adapter.stream
+          const streamProxyRes = new Proxy(res, {
+            get(target, prop) {
+              if (prop === 'write') {
+                return function (chunk, encoding, cb) {
+                  if (!clientHeadersCommitted) {
+                    if (firstChunkTimer) clearTimeout(firstChunkTimer);
+                    clientHeadersCommitted = true;
+                    if (!target.headersSent) {
+                      target.setHeader('Content-Type', 'text/event-stream');
+                      target.setHeader('Cache-Control', 'no-cache');
+                      target.setHeader('Connection', 'keep-alive');
+                      target.flushHeaders?.();
+                    }
+                  }
+                  return target.write(chunk, encoding, cb);
+                };
+              }
+              if (prop === 'setHeader' || prop === 'flushHeaders') {
+                // Defer actual headers dispatch until first write
+                return function (...args) {
+                  if (clientHeadersCommitted) return target[prop](...args);
+                };
+              }
+              if (prop === 'headersSent') {
+                return clientHeadersCommitted || target.headersSent;
+              }
+              const val = target[prop];
+              return typeof val === 'function' ? val.bind(target) : val;
+            },
+          });
+
+          const timeoutPromise = new Promise((_, reject) => {
+            firstChunkTimer = setTimeout(() => {
+              if (!clientHeadersCommitted) {
+                streamAbortController.abort();
+                const err = new Error('First chunk response timeout (60s exceeded)');
+                err.status = 504;
+                err.isTimeout = true;
+                reject(err);
+              }
+            }, 60000);
+          });
+
+          let streamResult;
+          try {
+            streamResult = await Promise.race([
+              adapter.stream(requestPayload, candidate.targetModel, streamProxyRes),
+              timeoutPromise,
+            ]);
+          } finally {
+            if (firstChunkTimer) clearTimeout(firstChunkTimer);
+          }
 
           const latencyMs = Date.now() - attemptStart;
           await accountManager.recordAccountSuccess(candidate.provider.id, candidate.account.id, latencyMs);
@@ -205,7 +264,19 @@ export class RouterEngine {
           });
           return;
         } else {
-          const responseData = await adapter.complete(requestPayload, candidate.targetModel);
+          const timeoutPromise = new Promise((_, reject) => {
+            setTimeout(() => {
+              const err = new Error('Model completion response timeout (60s exceeded)');
+              err.status = 504;
+              err.isTimeout = true;
+              reject(err);
+            }, 60000);
+          });
+
+          const responseData = await Promise.race([
+            adapter.complete(requestPayload, candidate.targetModel),
+            timeoutPromise,
+          ]);
           const latencyMs = Date.now() - attemptStart;
           await accountManager.recordAccountSuccess(candidate.provider.id, candidate.account.id, latencyMs);
           await logCall({
@@ -290,6 +361,14 @@ export class RouterEngine {
             message: err.message,
             data: err.data || err.errorData,
             headers: err.headers,
+          }, candidate.targetModel);
+        } else if (err.isTimeout && candidate.account) {
+          // Account hung / unresponsive: trigger short temporary cooldown (e.g. 90s)
+          // so router immediately falls back to next non-hung account without re-trying this one right away!
+          await accountManager.triggerAccountCooldown(candidate.provider.id, candidate.account.id, {
+            status: 504,
+            message: 'Model response hung (timeout 60s exceeded)',
+            cooldownMs: 90000,
           }, candidate.targetModel);
         }
 

@@ -141,13 +141,28 @@ class AccountManager {
     // 1. Check if upstream sent a Retry-After or message with time
     const parsedDelay = parseRetryAfterMs(err.headers, err.data);
 
-    // 2. Fall back to provider configured rateLimitCooldownSec, or default 60s
-    const configuredSec = provider.rateLimitCooldownSec || provider.defaultCooldownSec || 60;
-    let cooldownMs = parsedDelay !== null ? parsedDelay : configuredSec * 1000;
+    // 2. Fall back to explicit err.cooldownMs, provider configured rateLimitCooldownSec, or default 60s
+    let cooldownMs = err.cooldownMs || (parsedDelay !== null ? parsedDelay : (provider.rateLimitCooldownSec || provider.defaultCooldownSec || 60) * 1000);
 
     const family = this._getModelFamily(targetModel);
 
-    // 3. For antigravity 429s: granular per-family cooldown
+    // 3. For timeout errors specifically, don't query 429 quota API, just freeze briefly
+    if (err.status === 504 || err.isTimeout) {
+      if (providerId === 'antigravity') {
+        if (!acc.modelCooldowns) acc.modelCooldowns = {};
+        const untilTime = Date.now() + cooldownMs;
+        acc.modelCooldowns[family] = untilTime;
+        console.warn(
+          `[AccountManager] ⏳ Timeout (60s) on '${acc.name || acc.id}' [${family}]. Cooldown for ${Math.round(
+            cooldownMs / 1000
+          )}s.`
+        );
+        await providersDB.set(providerId, provider);
+        return acc;
+      }
+    }
+
+    // 4. For antigravity 429s: granular per-family cooldown
     if (providerId === 'antigravity') {
       try {
         console.log(`[AccountManager] 🔍 429 hit on '${acc.name}' for family '${family}' (${targetModel}) — checking real quota...`);

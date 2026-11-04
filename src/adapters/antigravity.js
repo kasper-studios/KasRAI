@@ -168,7 +168,8 @@ export class AntigravityAdapter extends BaseAdapter {
   }
 
   _convertOpenAIToAntigravity(requestPayload, targetModel) {
-    const rawMessages = requestPayload.messages || [];
+    let rawMessages = requestPayload.messages || [];
+
     let userSystemText = '';
     const rawContents = [];
 
@@ -815,6 +816,7 @@ export class AntigravityAdapter extends BaseAdapter {
           method: 'POST',
           headers,
           body: JSON.stringify(payload),
+          signal: AbortSignal.timeout(60000),
         });
 
         if (upstreamRes.ok) {
