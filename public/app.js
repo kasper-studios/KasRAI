@@ -1578,9 +1578,20 @@ function generateRandomPonosPrompt() {
   showToast('Случайный логический поносик заряжен в авто-тестер! 🎲💩', 'info', 2000);
 }
 
-function initAutoTester() {
+async function initAutoTester() {
   const provSelect = document.getElementById('autotest-provider-select');
   if (!provSelect) return;
+
+  // Make sure cachedProviders is loaded
+  if (!Array.isArray(cachedProviders) || cachedProviders.length === 0) {
+    try {
+      const res = await fetch('/api/providers');
+      cachedProviders = await res.json();
+    } catch (e) {
+      console.warn('Failed to fetch providers in initAutoTester:', e);
+    }
+  }
+
   provSelect.innerHTML = '';
 
   const optAll = document.createElement('option');
@@ -2302,6 +2313,7 @@ async function checkGitUpdateNow(btn = null) {
 // ==========================================
 document.addEventListener('DOMContentLoaded', () => {
   loadStatus();
+  loadProviders();
   loadGitStatus();
   loadAuthHeaderState();
   startLiveCooldownTicker();
