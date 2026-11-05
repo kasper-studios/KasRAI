@@ -91,6 +91,9 @@ export class ModelStateEngine {
       existing.lastError = null;
       existing.successCalls++;
       existing.lastLatencyMs = result.latency || null;
+      if (result.ttft !== undefined) existing.ttft = result.ttft;
+      if (result.tokensPerSec !== undefined) existing.tokensPerSec = result.tokensPerSec;
+      if (result.tokens !== undefined) existing.lastTokens = result.tokens;
       if (result.latency) {
         existing.avgLatencyMs = existing.avgLatencyMs
           ? Math.round((existing.avgLatencyMs * 0.7) + (result.latency * 0.3))

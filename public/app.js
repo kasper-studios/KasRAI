@@ -1685,7 +1685,8 @@ function renderAutotestModelCards(modelsList, statesMap) {
     if (isBroken) {
       initialBadge = '<span class="model-status-badge px-2 py-0.5 rounded text-[10px] font-mono bg-rose-500/20 text-rose-300 border border-rose-500/30 font-bold">🚫 Нерабочее (404)</span>';
     } else if (state.status === 'active' && state.successCalls > 0) {
-      initialBadge = `<span class="model-status-badge px-2 py-0.5 rounded text-[10px] font-mono bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-bold">🟢 OK (${state.lastLatencyMs || 0}ms)</span>`;
+      const extraMetrics = state.ttft ? ` [TTFT: ${(state.ttft / 1000).toFixed(1)}s]` : '';
+      initialBadge = `<span class="model-status-badge px-2 py-0.5 rounded text-[10px] font-mono bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-bold">🟢 OK (${state.lastLatencyMs || 0}ms${extraMetrics})</span>`;
     }
 
     const priorityBadge = `<span class="model-prio-badge px-1.5 py-0.5 rounded text-[10px] font-mono bg-dark-input ${isBroken ? 'text-gray-500' : 'text-brand-400'} border border-dark-cardBorder">P:${isBroken ? 0 : (state.effectivePriority || 50)}</span>`;
@@ -1738,13 +1739,12 @@ async function testSingleModel(providerId, modelId, btn = null) {
       body: JSON.stringify({
         model: targetModel,
         messages: [{ role: 'user', content: prompt }],
-        stream: false,
+        stream: true,
       }),
     });
 
-    const latency = Date.now() - start;
-
     if (res.status === 999) {
+      const latency = Date.now() - start;
       if (statusBadge) {
         statusBadge.className = 'model-status-badge px-2 py-0.5 rounded text-[10px] font-mono bg-purple-500/20 text-purple-300 border border-purple-500/40 font-bold';
         statusBadge.innerText = '💩 999 APKAKALSA';
@@ -1758,6 +1758,7 @@ async function testSingleModel(providerId, modelId, btn = null) {
     }
 
     if (!res.ok) {
+      const latency = Date.now() - start;
       const errData = await res.json().catch(() => ({}));
       const errText = errData.error?.message || `HTTP ${res.status}`;
       const is404 = res.status === 404 || errText.includes('404') || errText.toLowerCase().includes('not found') || errText.toLowerCase().includes('does not exist');
@@ -1787,8 +1788,54 @@ async function testSingleModel(providerId, modelId, btn = null) {
       return { ok: false, status: res.status, is404, error: errText, latency };
     }
 
-    const data = await res.json();
-    const content = data.choices?.[0]?.message?.content || (data.choices?.[0]?.message?.tool_calls ? '🛠️ Вызов инструмента' : '[Пустой ответ]');
+    // Read SSE Stream to measure real TTFT + Total Time + Token metrics
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder('utf-8');
+    let buffer = '';
+    let content = '';
+    let ttft = null;
+    let tokenCount = 0;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      const chunk = decoder.decode(value, { stream: true });
+      buffer += chunk;
+
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith(':') || !trimmed.startsWith('data: ')) continue;
+        const dataStr = trimmed.slice(6);
+        if (dataStr === '[DONE]') continue;
+
+        try {
+          const parsed = JSON.parse(dataStr);
+          const delta = parsed.choices?.[0]?.delta?.content || '';
+          if (delta) {
+            if (ttft === null) {
+              ttft = Date.now() - start;
+            }
+            content += delta;
+            tokenCount++;
+          }
+        } catch {}
+      }
+    }
+
+    const totalLatency = Date.now() - start;
+    if (ttft === null) ttft = totalLatency;
+
+    // Approximate token count from length if chunks were bundled
+    if (tokenCount <= 1 && content.length > 0) {
+      tokenCount = Math.max(1, Math.round(content.length / 4));
+    }
+
+    const genTimeSec = Math.max(0.05, (totalLatency - ttft) / 1000);
+    const tokensPerSec = (tokenCount / genTimeSec).toFixed(1);
 
     // If it was marked as broken before, auto-unmark!
     if (cardEl) {
@@ -1798,20 +1845,45 @@ async function testSingleModel(providerId, modelId, btn = null) {
 
     if (statusBadge) {
       statusBadge.className = 'model-status-badge px-2 py-0.5 rounded text-[10px] font-mono bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-bold';
-      statusBadge.innerText = `🟢 200 OK (${latency}ms)`;
-    }
-    if (previewBox) {
-      previewBox.classList.remove('hidden');
-      previewBox.innerHTML = `<span class="text-gray-300">${escapeHtml(content)}</span>`;
+      statusBadge.innerHTML = `🟢 200 OK (${totalLatency}ms)`;
     }
 
-    const updatedState = await recordTestResult(providerId, modelId, { ok: true, status: 200, latency, tokens: data.usage?.total_tokens || 0 });
+    if (previewBox) {
+      previewBox.classList.remove('hidden');
+      previewBox.innerHTML = `
+        <div class="flex flex-wrap items-center gap-2 mb-1.5 pb-1.5 border-b border-dark-cardBorder/60 text-[10px] text-gray-400">
+          <span class="text-amber-400 font-bold">⚡ TTFT: ${(ttft / 1000).toFixed(2)}s</span>
+          <span>•</span>
+          <span class="text-brand-400 font-bold">⏱️ Total: ${(totalLatency / 1000).toFixed(2)}s</span>
+          <span>•</span>
+          <span class="text-emerald-400 font-semibold">${tokenCount} токенов (${tokensPerSec} t/s)</span>
+        </div>
+        <div class="text-gray-300">${escapeHtml(content || '[Пустой ответ]')}</div>
+      `;
+    }
+
+    const updatedState = await recordTestResult(providerId, modelId, {
+      ok: true,
+      status: 200,
+      latency: totalLatency,
+      ttft,
+      tokens: tokenCount,
+      tokensPerSec: parseFloat(tokensPerSec),
+    });
+
     if (prioBadge && updatedState) {
       prioBadge.innerText = `P:${updatedState.effectivePriority || 50}`;
       prioBadge.className = 'model-prio-badge px-1.5 py-0.5 rounded text-[10px] font-mono bg-dark-input text-brand-400 border border-dark-cardBorder';
     }
 
-    return { ok: true, status: 200, latency, tokens: data.usage?.total_tokens || 0 };
+    return {
+      ok: true,
+      status: 200,
+      latency: totalLatency,
+      ttft,
+      tokens: tokenCount,
+      tokensPerSec: parseFloat(tokensPerSec),
+    };
   } catch (err) {
     const latency = Date.now() - start;
     if (statusBadge) {
