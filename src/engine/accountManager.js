@@ -65,7 +65,7 @@ class AccountManager {
     const cleanModel = targetModel ? targetModel.replace(/^(antigravity|gemini|openai|anthropic)\//i, '').trim() : null;
 
     const viable = accounts.filter((acc) => {
-      if (acc.status === 'disabled' || acc.status === 'invalid') {
+      if (acc.status === 'disabled' || acc.status === 'invalid' || acc.status === 'banned') {
         return false;
       }
       // If global cooldown is still active, skip
@@ -94,7 +94,7 @@ class AccountManager {
     // Google quotas often refresh dynamically or stale cache blocks valid requests.
     if (viable.length === 0 && accounts.length > 0) {
       const activeUnfrozen = accounts.filter(acc => {
-        if (acc.status === "disabled" || acc.status === "invalid") return false;
+        if (acc.status === "disabled" || acc.status === "invalid" || acc.status === "banned") return false;
         if (acc.status === "cooldown" && acc.cooldownUntil && acc.cooldownUntil > now) return false;
         if (acc.modelCooldowns && acc.modelCooldowns[family] && acc.modelCooldowns[family] > now) return false;
         return true;
@@ -123,6 +123,30 @@ class AccountManager {
     }
 
     return viable;
+  }
+
+  /**
+   * Permanently ban an account when upstream returns a Terms of Service / Account Disabled violation.
+   * Sets status to 'banned', records reason, and immediately persists to DB so it never enters rotation again.
+   */
+  async banAccount(providerId, accountId, reason) {
+    const provider = await providersDB.get(providerId);
+    if (!provider) return;
+
+    const accounts = Array.isArray(provider.accounts) ? provider.accounts : [];
+    const acc = accounts.find((a) => a.id === accountId);
+    if (!acc) return;
+
+    acc.status = 'banned';
+    acc.banReason = reason || 'Violation of Terms of Service / Account Disabled';
+    acc.bannedAt = new Date().toISOString();
+    acc.cooldownUntil = 0;
+    acc.cooldownReason = null;
+
+    console.error(`\n🚨 [KasRAI Alert] Account ${acc.name || acc.id} (${providerId}) BANNED BY GOOGLE ToS! Reason: ${acc.banReason}\n`);
+
+    await providersDB.set(providerId, provider);
+    return acc;
   }
 
   /**

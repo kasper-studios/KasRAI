@@ -225,7 +225,9 @@ function renderProviders() {
       ? accounts.map((acc) => {
           const isCooldown = acc.status === 'cooldown' || (acc.cooldownRemainingSec && acc.cooldownRemainingSec > 0);
           let statusBadge = `<span class="px-2 py-0.5 rounded text-[10px] bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 font-mono">ЖИВ</span>`;
-          if (acc.status === 'invalid') {
+          if (acc.status === 'banned') {
+            statusBadge = `<span class="px-2 py-0.5 rounded text-[10px] bg-red-600/20 border border-red-500/40 text-red-400 font-bold font-mono" title="${escapeHtml(acc.banReason || 'Banned by Google ToS')}">🚫 БАН ToS</span>`;
+          } else if (acc.status === 'invalid') {
             statusBadge = `<span class="px-2 py-0.5 rounded text-[10px] bg-rose-500/10 border border-rose-500/20 text-rose-400 font-mono" title="${acc.invalidReason || 'Невалиден'}">МЁРТВ</span>`;
           } else if (isCooldown) {
             statusBadge = `

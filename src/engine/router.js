@@ -345,13 +345,32 @@ export class RouterEngine {
           return;
         }
 
+        // Check for ToS Ban / Account Disabled / User Suspended
+        const errStr = `${err.message || ''} ${JSON.stringify(err.data || err.errorData || '')}`.toLowerCase();
+        const isToSBan =
+          errStr.includes('service has been disabled in this account') ||
+          errStr.includes('terms of service') ||
+          errStr.includes('account_disabled') ||
+          errStr.includes('user_suspended') ||
+          errStr.includes('has been disabled');
+
+        if (isToSBan && candidate.account) {
+          await accountManager.banAccount(
+            candidate.provider.id,
+            candidate.account.id,
+            err.message || 'Terms of Service violation / Account Disabled'
+          );
+        }
+
         // Check for 429 / Rate Limit / Quota Exceeded
         const isQuotaErr =
-          err.status === 429 ||
-          err.message?.includes('RESOURCE_EXHAUSTED') ||
-          err.message?.includes('rate_limit_exceeded') ||
-          err.message?.includes('insufficient_quota') ||
-          err.message?.includes('quota');
+          !isToSBan && (
+            err.status === 429 ||
+            err.message?.includes('RESOURCE_EXHAUSTED') ||
+            err.message?.includes('rate_limit_exceeded') ||
+            err.message?.includes('insufficient_quota') ||
+            err.message?.includes('quota')
+          );
 
         if (isQuotaErr && candidate.account) {
           // Pass full error object with data and headers so RetryInfo/quotaResetDelay is accurately parsed!

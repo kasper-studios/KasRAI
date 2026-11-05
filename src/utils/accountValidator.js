@@ -107,6 +107,23 @@ export async function validateAccount(providerId, account) {
         });
 
         const latencyMs = Date.now() - start;
+        const errText = await probeRes.text().catch(() => '');
+        const errLower = errText.toLowerCase();
+        const isBanned =
+          errLower.includes('service has been disabled in this account') ||
+          errLower.includes('terms of service') ||
+          errLower.includes('account_disabled') ||
+          errLower.includes('user_suspended') ||
+          errLower.includes('has been disabled');
+
+        if (isBanned) {
+          account.status = 'banned';
+          account.banReason = 'Google ToS violation / Service disabled';
+          account.bannedAt = new Date().toISOString();
+          console.error(`\n🚨 [KasRAI Alert] Account ${account.name} BANNED BY GOOGLE ToS during health-check!\n`);
+          await saveAccountState(providerId, account);
+          return { healthy: false, status: 'banned', latencyMs, message: 'Аккаунт забанен Google ToS (Service Disabled)' };
+        }
 
         if (probeRes.ok) {
           account.status = 'active';
