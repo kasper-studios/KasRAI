@@ -187,7 +187,7 @@ apiRouter.get('/providers/:id/oauth/authorize', (req, res) => {
   try {
     const { id } = req.params;
     const host = req.get('host') || `localhost:${CONFIG.PORT}`;
-    const redirectUri = `http://${host}/oauth/callback`;
+    const redirectUri = `http://localhost:${CONFIG.PORT}/oauth/callback`;
     const oauthData = buildOAuthUrl(id, redirectUri);
     res.redirect(oauthData.authUrl);
   } catch (err) {
