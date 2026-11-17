@@ -513,11 +513,18 @@ export class RouterEngine {
     const totalLatency = Date.now() - startTime;
     const finalErrMsg = `All ${candidates.length} routing candidate(s) failed for '${requestedModel}': ${errors.join('; ')}`;
 
+    // When EVERY candidate got 429, this is upstream rate-limiting (often a flapping
+    // shared pool invisible in quota APIs), not a gateway failure. Respond 429 + Retry-After
+    // so agent clients back off and retry themselves instead of treating it as fatal.
+    const allQuotaExhausted =
+      candidateErrors.length > 0 && candidateErrors.every((e) => e.status === 429);
+    const finalStatus = allQuotaExhausted ? 429 : 502;
+
     await logCall({
       requestId,
       requestedModel,
       status: 'error',
-      statusCode: 502,
+      statusCode: finalStatus,
       latencyMs: totalLatency,
       error: finalErrMsg,
       stream: isStream,
@@ -533,11 +540,14 @@ export class RouterEngine {
     });
 
     if (!res.headersSent) {
-      return res.status(502).json({
+      if (allQuotaExhausted) {
+        res.setHeader('Retry-After', '30');
+      }
+      return res.status(finalStatus).json({
         error: {
           message: finalErrMsg,
-          type: 'kasrai_all_candidates_failed',
-          code: 502,
+          type: allQuotaExhausted ? 'kasrai_rate_limited' : 'kasrai_all_candidates_failed',
+          code: finalStatus,
           details: errors,
         },
       });

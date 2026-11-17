@@ -364,6 +364,11 @@ Root cause of "fixes deployed but gateway behaves the same all day": `gitUpdater
 
 Live state after the fix (2026-11-17 ~21:32 UTC): windows healthy on 4/6 accounts (dimakukic1 & kikban92 weekly-exhausted until Nov 21/22), parallel test requests spread across accounts via rotation (fallback worked), burst-429 after a just-finished stream rotates to another account in ~2s. Remaining watch item: if 502s reappear, `candidateErrors` in the log inspector now carries the raw Google error body (quotaId) — paste it for exact diagnosis.
 
+### 17. All-429 windows: bare RESOURCE_EXHAUSTED + 429/Retry-After response (2026-11-17 late evening)
+
+Root-cause hunt conclusion for the recurring Hermes 502s: controlled experiments through the live gateway RULED OUT request shape entirely — `reasoning_effort` (adapter drops it, never forwarded), 40 fat tools (72KB payload), 120K-char context (238KB payload) all returned 200; one account served 5 requests in 39s with 6-13s gaps; 5h windows verified 89-95% on all active accounts minutes before an all-429 burst. The upstream returns a BARE `{"error":{"code":429,"status":"RESOURCE_EXHAUSTED"}}` — no quotaId/violations/RetryInfo — so cloudcode-pa does not disclose which invisible limit tripped (per-minute burst, shared 'aicode-consumers' pool shaping, or per-IP). The windows last 1-5 minutes and hit every account simultaneously regardless of individual quota health.
+- Response semantics fixed: when every candidate fails with 429, the gateway now responds **HTTP 429 + `Retry-After: 30`** (`kasrai_rate_limited`) instead of 502 — agent clients (Hermes/Dirom) apply standard backoff and retry themselves instead of treating it as a fatal gateway error. Non-quota failures still return 502.
+- The internal retry round (10s) stays as the first line of defense; client-side backoff covers longer windows.
 **Last Updated:** 2026-11-17  
 **Project Status:** bootstrap / active development  
 **DevNotes Version:** v0.5
