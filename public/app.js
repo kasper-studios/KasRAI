@@ -47,18 +47,65 @@ function showToast(message, type = 'info', duration = 3500) {
 }
 
 // Quick Copy Helper
+function fallbackCopyText(text) {
+  let textArea = document.createElement('textarea');
+  textArea.value = text;
+  textArea.setAttribute('readonly', '');
+  textArea.style.position = 'absolute';
+  textArea.style.left = '-9999px';
+  textArea.style.fontSize = '13px';
+  textArea.style.top = '0';
+  textArea.style.overflow = 'hidden';
+  document.body.appendChild(textArea);
+  textArea.select();
+  try { textArea.setSelectionRange(0, text.length); } catch (e) { /* ignore */ }
+  let ok = false;
+  try {
+    ok = document.execCommand('copy');
+  } catch (err) {
+    ok = false;
+  }
+  document.body.removeChild(textArea);
+  return ok;
+}
+
 function copyToClipboard(text, btn = null) {
   if (!text) return;
-  navigator.clipboard.writeText(text).then(() => {
-    showToast(`Скопировано в буфер: ${text.length > 30 ? text.slice(0, 30) + '...' : text}`, 'success', 2000);
+
+  function done(success, detail) {
+    const ok = success ? 'success' : 'error';
+    const msg = success
+      ? `Скопировано`
+      : `Не удалось скопировать` + (detail ? ` • ${detail}` : '');
+    showToast(msg, ok, 2600);
     if (btn) {
       const originalHtml = btn.innerHTML;
       btn.innerHTML = '<i class="fa-solid fa-check text-emerald-400"></i>';
       setTimeout(() => { btn.innerHTML = originalHtml; }, 1500);
     }
-  }).catch(() => {
-    showToast('Не удалось скопировать', 'error');
-  });
+  }
+
+  // 1. Modern secure-context clipboard API
+  if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+    navigator.clipboard.writeText(text)
+      .then(() => done(true))
+      .catch((err) => {
+        // 2. Fallback-only environment (non-secure origin / sandboxed iframe)
+        if (fallbackCopyText(text)) {
+          done(true, 'использован запасной метод копирования (textarea + execCommand)');
+        } else {
+          done(false, 'clipboard API + fallback не работают; проверь JS-консоль браузера (PermissionDeniedError / NotFoundError)');
+        }
+      });
+    return;
+  }
+
+  // 3. No clipboard API at all -> fallback only
+  if (fallbackCopyText(text)) {
+    done(true, 'использован запасной метод копирования (textarea + execCommand)');
+  } else {
+    done(false, 'без поддержки clipboard API и execCommand; проверь JS-консоль браузера');
+  }
 }
 
 // ==========================================
@@ -308,16 +355,23 @@ function renderProviders() {
           <div class="flex items-center justify-between mb-2">
             <span class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Пул аккаунтов (${accounts.length})</span>
             <div class="flex items-center space-x-1.5">
-              ${p.authType === 'oauth' || p.preset === 'antigravity' ? `
+              ${p.preset === 'nous' || p.id === 'nous' ? `
+                <button onclick="connectNousPortal('${p.id}')" class="px-2 py-1 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 rounded-lg text-[11px] font-medium transition flex items-center space-x-1">
+                  <i class="fa-solid fa-right-to-bracket"></i>
+                  <span>Войти через Nous Portal</span>
+                </button>
+              ` : p.authType === 'oauth' || p.preset === 'antigravity' ? `
                 <a href="/api/providers/${p.id}/oauth/authorize" target="_blank" class="px-2 py-1 bg-purple-500/10 hover:bg-purple-500/20 text-purple-300 border border-purple-500/30 rounded-lg text-[11px] font-medium transition flex items-center space-x-1">
                   <i class="fa-solid fa-link"></i>
                   <span>+ OAuth вход</span>
                 </a>
               ` : ''}
-              <button onclick="openAddAccountModal('${p.id}')" class="px-2 py-1 bg-dark-input hover:bg-dark-cardBorder text-gray-200 border border-dark-cardBorder rounded-lg text-[11px] font-medium transition flex items-center space-x-1">
-                <i class="fa-solid fa-plus text-[10px]"></i>
-                <span>Ключ</span>
-              </button>
+              ${p.preset === 'nous' || p.id === 'nous' ? '' : `
+                <button onclick="openAddAccountModal('${p.id}')" class="px-2 py-1 bg-dark-input hover:bg-dark-cardBorder text-gray-200 border border-dark-cardBorder rounded-lg text-[11px] font-medium transition flex items-center space-x-1">
+                  <i class="fa-solid fa-plus text-[10px]"></i>
+                  <span>Ключ</span>
+                </button>
+              `}
             </div>
           </div>
           <div class="space-y-1.5 max-h-56 overflow-y-auto pr-1">
@@ -942,12 +996,103 @@ function closeAddProviderModal() {
   document.getElementById('add-provider-modal').classList.add('hidden');
 }
 
+let nousDevicePollTimer = null;
+let nousDeviceFlowState = null;
+
+async function connectNousPortal() {
+  if (nousDevicePollTimer) clearTimeout(nousDevicePollTimer);
+  nousDevicePollTimer = null;
+  nousDeviceFlowState = null;
+  try {
+    const response = await fetch('/api/oauth/nous/device', { method: 'POST' });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+    nousDeviceFlowState = data.state;
+
+    const safeUrl = /^https:\/\/portal\.nousresearch\.com(?:\/|$)/i.test(data.verificationUriComplete)
+      ? data.verificationUriComplete
+      : data.verificationUri;
+    const escapedUrl = safeUrl.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+    const modal = document.createElement('div');
+    modal.id = 'nous-oauth-modal';
+    modal.className = 'fixed inset-0 bg-black/70 backdrop-blur-sm z-[70] flex items-center justify-center p-4';
+    modal.innerHTML = `
+      <div class="bg-dark-card border border-dark-cardBorder rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl">
+        <div class="flex items-center justify-between border-b border-dark-cardBorder pb-3">
+          <h3 class="text-base font-bold">Вход через Nous Portal</h3>
+          <button id="nous-oauth-close" class="text-gray-400 hover:text-white"><i class="fa-solid fa-xmark text-lg"></i></button>
+        </div>
+        <p class="text-sm text-gray-300">Открой Nous Portal, войди в аккаунт и подтверди подключение.</p>
+        <a href="${escapedUrl}" target="_blank" rel="noopener noreferrer" class="block text-center px-4 py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-semibold">Открыть Nous Portal</a>
+        <div class="bg-dark-input border border-dark-cardBorder rounded-xl p-4 text-center">
+          <div class="text-xs text-gray-400 mb-1">Код подтверждения</div>
+          <code class="text-2xl tracking-[0.2em] font-bold text-emerald-300 select-all">${String(data.userCode).replace(/[^A-Za-z0-9-]/g, '')}</code>
+        </div>
+        <p id="nous-oauth-status" class="text-xs text-gray-400 text-center">Жду подтверждения в браузере…</p>
+      </div>`;
+    document.body.appendChild(modal);
+
+    const close = () => {
+      if (nousDevicePollTimer) clearTimeout(nousDevicePollTimer);
+      nousDevicePollTimer = null;
+      const state = nousDeviceFlowState;
+      nousDeviceFlowState = null;
+      modal.remove();
+      if (state) fetch(`/api/oauth/nous/device/${encodeURIComponent(state)}`, { method: 'DELETE' }).catch(() => {});
+    };
+    modal.querySelector('#nous-oauth-close').addEventListener('click', close);
+    modal.addEventListener('click', (event) => { if (event.target === modal) close(); });
+    startNousDevicePolling(data.state, Number(data.interval || 5) * 1000);
+  } catch (error) {
+    showToast(`Не удалось начать вход Nous Portal: ${error.message}`, 'error', 6000);
+  }
+}
+
+function startNousDevicePolling(state, delayMs) {
+  if (nousDeviceFlowState !== state) return;
+  nousDevicePollTimer = setTimeout(async () => {
+    try {
+      const response = await fetch('/api/oauth/nous/poll', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ state }),
+      });
+      const data = await response.json();
+      const statusEl = document.getElementById('nous-oauth-status');
+      if (data.status === 'complete') {
+        nousDeviceFlowState = null;
+        if (statusEl) statusEl.textContent = `Подключено: ${data.accountName}`;
+        showToast(`Nous Portal подключён (${data.accountName})`, 'success');
+        setTimeout(() => document.getElementById('nous-oauth-modal')?.remove(), 900);
+        loadProviders();
+        loadStatus();
+        return;
+      }
+      if (data.status === 'pending') {
+        if (statusEl) statusEl.textContent = data.message && data.message !== 'authorization_pending'
+          ? `${data.message} · жду подтверждения…`
+          : 'Жду подтверждения в браузере…';
+        startNousDevicePolling(state, Math.max(1000, Number(data.intervalMs || delayMs)));
+        return;
+      }
+      nousDeviceFlowState = null;
+      if (statusEl) statusEl.textContent = data.message || data.error || 'Не удалось завершить вход.';
+    } catch (error) {
+      startNousDevicePolling(state, 5000);
+    }
+  }, Math.max(500, delayMs));
+}
+
 function onPresetChange() {
   const preset = document.getElementById('new-prov-preset').value;
   const urlInput = document.getElementById('new-prov-url');
   const authSelect = document.getElementById('new-prov-authtype');
+  const idInput = document.getElementById('new-prov-id');
+  const nameInput = document.getElementById('new-prov-name');
   const defaults = {
     openai: 'https://api.openai.com/v1',
+    codex: 'https://api.codex.com/v1',
+    nous: 'https://inference-api.nousresearch.com/v1',
     anthropic: 'https://api.anthropic.com/v1',
     gemini: 'https://generativelanguage.googleapis.com/v1beta',
     openrouter: 'https://openrouter.ai/api/v1',
@@ -956,6 +1101,20 @@ function onPresetChange() {
   };
   if (defaults[preset]) {
     urlInput.value = defaults[preset];
+  }
+  if (preset === 'nous') {
+    idInput.value = 'nous';
+    idInput.readOnly = true;
+    if (!nameInput.value || nameInput.value === 'Nous Portal') nameInput.value = 'Nous Portal';
+    authSelect.value = 'oauth_device_code';
+    onNewProvAuthChange();
+  } else {
+    idInput.readOnly = false;
+    if (idInput.value === 'nous') idInput.value = '';
+    if (authSelect.value === 'oauth_device_code') {
+      authSelect.value = 'key';
+      onNewProvAuthChange();
+    }
   }
   // Notion preset uses cookies — auto-switch auth type to cookie
   if (preset === 'notion' && authSelect) {
@@ -973,7 +1132,7 @@ function onNewProvAuthChange() {
     keyGroup.classList.remove('hidden');
     oauthGroup.classList.add('hidden');
     cookieGroup.classList.add('hidden');
-  } else if (authType === 'oauth') {
+  } else if (authType === 'oauth' || authType === 'oauth_device_code') {
     keyGroup.classList.add('hidden');
     oauthGroup.classList.remove('hidden');
     cookieGroup.classList.add('hidden');
@@ -987,14 +1146,23 @@ function onNewProvAuthChange() {
 async function saveNewProvider() {
   const id = document.getElementById('new-prov-id').value.trim().toLowerCase();
   const name = document.getElementById('new-prov-name').value.trim();
-  const type = document.getElementById('new-prov-preset').value;
+  const providerType = document.getElementById('new-prov-preset').value;
+  const type = providerType === 'codex' ? 'openai' : providerType;
   const baseURL = document.getElementById('new-prov-url').value.trim();
-  const authType = document.getElementById('new-prov-authtype').value;
+  const authType = providerType === 'nous' ? 'oauth_device_code' : document.getElementById('new-prov-authtype').value;
   const apiKey = document.getElementById('new-prov-key').value.trim();
   const cookieRaw = document.getElementById('new-prov-cookie-raw')?.value.trim() || '';
 
   if (!id || !name) {
     showToast('Укажите ID и Название провайдера', 'warning');
+    return;
+  }
+  if (cachedProviders.some((provider) => provider.id.toLowerCase() === id)) {
+    showToast(`Провайдер с ID «${id}» уже существует`, 'warning');
+    return;
+  }
+  if (authType === 'key' && !apiKey) {
+    showToast('Введите API-ключ или выберите другой способ авторизации', 'warning');
     return;
   }
 
@@ -1028,7 +1196,8 @@ async function saveNewProvider() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
     showToast('Провайдер успешно создан!', 'success');
     closeAddProviderModal();
     loadProviders();
@@ -1189,6 +1358,11 @@ function openAddRouteModal() {
   document.getElementById('new-route-name').value = 'kasrai/';
   document.getElementById('new-route-desc').value = '';
   document.getElementById('new-route-targets').value = '';
+  const providerSelect = document.getElementById('new-route-provider');
+  const enabledProviders = cachedProviders.filter((provider) => provider.enabled !== false);
+  providerSelect.innerHTML = enabledProviders.length
+    ? enabledProviders.map((provider) => `<option value="${escapeHtml(provider.id)}">${escapeHtml(provider.name)} (${escapeHtml(provider.id)})</option>`).join('')
+    : '<option value="">Нет включённых провайдеров</option>';
   document.getElementById('add-route-modal').classList.remove('hidden');
 }
 
@@ -1207,10 +1381,23 @@ async function saveNewRoute() {
     return;
   }
 
-  const targets = targetsRaw.split(',').map((t, idx) => ({
-    model: t.trim(),
-    priority: 100 - idx * 10,
-  })).filter((t) => t.model.length > 0);
+  const defaultProvider = document.getElementById('new-route-provider').value;
+  if (!defaultProvider) {
+    showToast('Сначала добавьте и включите провайдера', 'warning');
+    return;
+  }
+  const targets = targetsRaw.split(',').map((value, idx) => {
+    const item = value.trim();
+    const slash = item.indexOf('/');
+    const possibleProvider = slash > 0 ? item.slice(0, slash) : '';
+    const provider = cachedProviders.some((candidate) => candidate.id === possibleProvider) ? possibleProvider : defaultProvider;
+    const model = provider === possibleProvider ? item.slice(slash + 1).trim() : item;
+    return { provider, model, priority: 100 - idx * 10 };
+  }).filter((target) => target.model.length > 0);
+  if (!targets.length) {
+    showToast('Укажите хотя бы одну модель', 'warning');
+    return;
+  }
 
   try {
     const res = await fetch('/api/routes', {
@@ -1218,7 +1405,8 @@ async function saveNewRoute() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name, description, mode, targets, enabled: true }),
     });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
     showToast('Маршрут успешно создан!', 'success');
     closeAddRouteModal();
     loadRoutes();

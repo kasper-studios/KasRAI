@@ -211,6 +211,7 @@ print(resp.choices[0].message.content)</pre>
             <i class="fa-solid fa-file-import text-purple-400"></i>
             <span>Импорт из OmniRoute</span>
           </button>
+
           <button onclick="openAddProviderModal()" class="px-3.5 py-2 bg-brand-600 hover:bg-brand-500 text-white rounded-xl text-sm font-medium transition shadow-sm flex items-center space-x-2">
             <i class="fa-solid fa-plus"></i>
             <span>Добавить провайдер</span>
@@ -604,6 +605,8 @@ print(resp.choices[0].message.content)</pre>
         <label class="block text-xs font-semibold text-gray-400 uppercase mb-1">Тип API провайдера</label>
         <select id="new-prov-preset" onchange="onPresetChange()" class="w-full bg-dark-input border border-dark-cardBorder rounded-xl px-3.5 py-2 text-sm focus:outline-none focus:border-brand-500 font-mono">
           <option value="openai">OpenAI формат (OpenAI, Groq, OpenRouter, DeepSeek, Ollama)</option>
+          <option value="codex">Codex (OpenAI-совместимый, api.codex.com)</option>
+          <option value="nous">Nous Portal (OAuth через Portal)</option>
           <option value="anthropic">Anthropic формат (Claude Messages API)</option>
           <option value="gemini">Gemini формат (Google AI Studio)</option>
           <option value="notion">Notion AI (Reverse Engineered - Десерты)</option>
@@ -617,7 +620,12 @@ print(resp.choices[0].message.content)</pre>
 
       <div>
         <label class="block text-xs font-semibold text-gray-400 uppercase mb-1">Название</label>
-        <input type="text" id="new-prov-name" placeholder="Antigravity Work" class="w-full bg-dark-input border border-dark-cardBorder rounded-xl px-3.5 py-2 text-sm focus:outline-none focus:border-brand-500">
+        <input type="text" id="new-prov-name" placeholder="Antigravity Work" class="w-full bg-dark-input border border-dark-cardBorder rounded-xl px-3.5 py-2 text-sm font-mono focus:outline-none focus:border-brand-500">
+      </div>
+
+      <div>
+        <label class="block text-xs font-semibold text-gray-400 uppercase mb-1">URL провайдера / API endpoint</label>
+        <input type="text" id="new-prov-url" placeholder="https://api.openai.com/v1" class="w-full bg-dark-input border border-dark-cardBorder rounded-xl px-3.5 py-2 text-sm font-mono focus:outline-none focus:border-brand-500">
       </div>
 
       <div>
@@ -626,6 +634,7 @@ print(resp.choices[0].message.content)</pre>
           <option value="key">API Key</option>
           <option value="oauth">OAuth (Google Авторизация по ссылке)</option>
           <option value="cookie">Cookie / token_v2 (Notion)</option>
+          <option value="oauth_device_code">Вход через Nous Portal</option>
         </select>
       </div>
 
@@ -642,9 +651,59 @@ print(resp.choices[0].message.content)</pre>
         </div>
       </div>
 
+      <div id="group-new-prov-oauth" class="space-y-3 hidden">
+        <p class="text-xs text-gray-400">После создания откройте карточку провайдера и нажмите «Войти через Nous Portal» — как обычное подключение аккаунта.</p>
+      </div>
+
       <div class="flex justify-end space-x-2 pt-2">
         <button onclick="closeAddProviderModal()" class="px-4 py-2 bg-dark-input hover:bg-dark-cardBorder text-gray-300 rounded-xl text-sm font-medium transition">Отмена</button>
         <button onclick="saveNewProvider()" class="px-4 py-2 bg-brand-600 hover:bg-brand-500 text-white rounded-xl text-sm font-semibold transition">Создать</button>
+      </div>
+    </div>
+  </div>
+
+      <!-- Add Route Modal -->
+  <div id="add-route-modal" class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+    <div class="bg-dark-card border border-dark-cardBorder rounded-2xl max-w-lg w-full p-6 space-y-4 shadow-2xl">
+      <div class="flex items-center justify-between border-b border-dark-cardBorder pb-3">
+        <h3 class="text-base font-bold">Создать маршрут</h3>
+        <button onclick="closeAddRouteModal()" class="text-gray-400 hover:text-white"><i class="fa-solid fa-xmark text-lg"></i></button>
+      </div>
+
+      <div>
+        <label class="block text-xs font-semibold text-gray-400 uppercase mb-1">Имя маршрута</label>
+        <input type="text" id="new-route-name" placeholder="напр. kasrai/main" class="w-full bg-dark-input border border-dark-cardBorder rounded-xl px-3.5 py-2 text-sm font-mono focus:outline-none focus:border-brand-500">
+      </div>
+
+      <div>
+        <label class="block text-xs font-semibold text-gray-400 uppercase mb-1">Описание</label>
+        <input type="text" id="new-route-desc" placeholder="Краткое описание маршрута" class="w-full bg-dark-input border border-dark-cardBorder rounded-xl px-3.5 py-2 text-sm font-mono focus:outline-none focus:border-brand-500">
+      </div>
+
+      <div>
+        <label class="block text-xs font-semibold text-gray-400 uppercase mb-1">Провайдер по умолчанию</label>
+        <select id="new-route-provider" class="w-full bg-dark-input border border-dark-cardBorder rounded-xl px-3.5 py-2 text-sm focus:outline-none focus:border-brand-500 font-mono"></select>
+        <p class="text-[11px] text-gray-500 mt-1">Для цепочки из разных провайдеров укажите элементы как provider/model.</p>
+      </div>
+
+      <div>
+        <label class="block text-xs font-semibold text-gray-400 uppercase mb-1">Модели (через запятую)</label>
+        <input type="text" id="new-route-targets" placeholder="gpt-4, antigravity/gemini-3.8-flash-high" class="w-full bg-dark-input border border-dark-cardBorder rounded-xl px-3.5 py-2 text-sm font-mono focus:outline-none focus:border-brand-500">
+      </div>
+
+      <div>
+        <label class="block text-xs font-semibold text-gray-400 uppercase mb-1">Режим ротации</label>
+        <select id="new-route-mode" class="w-full bg-dark-input border border-dark-cardBorder rounded-xl px-3.5 py-2 text-sm focus:outline-none focus:border-brand-500 font-mono">
+          <option value="priority">Priority</option>
+          <option value="round-robin">Round-Robin</option>
+          <option value="least-used">Least-Used</option>
+          <option value="random">Random</option>
+        </select>
+      </div>
+
+      <div class="flex justify-end space-x-2 pt-2">
+        <button onclick="closeAddRouteModal()" class="px-4 py-2 bg-dark-input hover:bg-dark-cardBorder text-gray-300 rounded-xl text-sm font-medium transition">Отмена</button>
+        <button onclick="saveNewRoute()" class="px-4 py-2 bg-brand-600 hover:bg-brand-500 text-white rounded-xl text-sm font-semibold transition">Создать</button>
       </div>
     </div>
   </div>

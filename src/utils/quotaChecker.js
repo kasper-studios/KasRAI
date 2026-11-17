@@ -1,5 +1,6 @@
 import { providersDB } from '../db/index.js';
 import { getValidAuthToken } from './oauth.js';
+import { resolveAntigravityBaseURL } from '../adapters/antigravity.js';
 
 /**
  * Extract Notion cookie fields from an account.
@@ -151,13 +152,17 @@ export async function checkAccountQuota(providerId, account) {
   // 1. Antigravity (Google Cloud Code)
   if (prov === 'antigravity') {
     try {
-      const token = await getValidAuthToken('antigravity', account);
+      const token = await getValidAuthToken(providerId, account);
       if (!token) {
         return { supported: true, ok: false, error: 'No valid token available' };
       }
 
+      // Query the same host the completion path actually uses (provider baseURL),
+      // not a hardcoded one — otherwise quota data and generation come from different upstreams.
+      const providerCfg = await providersDB.get(providerId);
+      const base = resolveAntigravityBaseURL(providerCfg?.baseURL);
       const projectId = account.projectId || account.oauth?.projectId || 'aicode-consumers';
-      const res = await fetch('https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels', {
+      const res = await fetch(`${base}/v1internal:fetchAvailableModels`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -189,7 +194,7 @@ export async function checkAccountQuota(providerId, account) {
       // retrieveUserQuota is the single source of truth for actual remaining fraction & reset timestamps!
       const userQuotaMap = new Map();
       try {
-        const uqRes = await fetch('https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota', {
+        const uqRes = await fetch(`${base}/v1internal:retrieveUserQuota`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -226,13 +231,17 @@ export async function checkAccountQuota(providerId, account) {
         if (mInfo.quotaInfo || userQuotaMap.has(mId)) {
           const liveInfo = userQuotaMap.get(mId);
           let frac;
+          let unknown = false;
           if (liveInfo && liveInfo.remainingFraction !== null) {
             frac = liveInfo.remainingFraction;
           } else if (typeof mInfo.quotaInfo?.remainingFraction === 'number') {
             frac = mInfo.quotaInfo.remainingFraction;
           } else if (mInfo.quotaInfo?.resetTime || liveInfo?.resetTime) {
-            // Upstream reported a resetTime with no fraction => quota is exhausted (0)
-            frac = 0;
+            // Upstream reported a resetTime with no fraction: state is UNKNOWN.
+            // Do NOT fake 0% here — false "exhausted" entries made the router skip
+            // accounts whose quota was actually fine.
+            frac = null;
+            unknown = true;
           } else {
             // Truly unlimited model with no reset time
             frac = 1;
@@ -243,11 +252,14 @@ export async function checkAccountQuota(providerId, account) {
           modelsQuota[mId] = {
             displayName: mInfo.displayName || mId,
             remainingFraction: frac,
-            remainingPercent: Math.round(frac * 100),
+            remainingPercent: frac === null ? null : Math.round(frac * 100),
+            unknown,
             resetTime,
           };
-          totalFraction += frac;
-          count++;
+          if (frac !== null) {
+            totalFraction += frac;
+            count++;
+          }
 
           if (resetTime) {
             const rDate = new Date(resetTime);
@@ -309,7 +321,7 @@ export async function checkAccountQuota(providerId, account) {
       };
 
       // Update in providersDB
-      const provider = await providersDB.get('antigravity');
+      const provider = await providersDB.get(providerId);
       if (provider && Array.isArray(provider.accounts)) {
         const accIdx = provider.accounts.findIndex((a) => a.id === account.id);
         if (accIdx !== -1) {

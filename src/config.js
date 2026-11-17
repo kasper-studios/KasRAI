@@ -12,6 +12,13 @@ export const CONFIG = {
   DATA_DIR: path.join(ROOT_DIR, 'data'),
   PUBLIC_DIR: path.join(ROOT_DIR, 'public'),
   VERSION: '0.1.0',
+  // Legacy alias (kept for backwards compatibility; not used directly anymore)
   TIMEOUT_MS: parseInt(process.env.TIMEOUT_MS || '120000', 10), // 2 min
+  // Per-attempt timeout waiting for the FIRST chunk of a streaming response (TTFT)
+  FIRST_CHUNK_TIMEOUT_MS: parseInt(process.env.FIRST_CHUNK_TIMEOUT_MS || process.env.TIMEOUT_MS || '120000', 10),
+  // Whole-response timeout for non-streaming completions
+  COMPLETION_TIMEOUT_MS: parseInt(process.env.COMPLETION_TIMEOUT_MS || process.env.TIMEOUT_MS || '120000', 10),
+  // Max silence between streaming chunks (idle timeout inside the read loop)
+  STREAM_IDLE_TIMEOUT_MS: parseInt(process.env.STREAM_IDLE_TIMEOUT_MS || '120000', 10),
   MAX_LOGS: 500, // keep last 500 requests in kasdb
 };

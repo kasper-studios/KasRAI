@@ -1,10 +1,18 @@
 import { BaseAdapter } from './base.js';
 import { getValidAuthToken } from '../utils/oauth.js';
+import { hasGeneratedStreamOutput } from './streamOutput.js';
 
 export class OpenAIAdapter extends BaseAdapter {
   constructor(providerConfig, activeAccount = null) {
     super(providerConfig);
     this.account = activeAccount;
+  }
+
+  get baseURL() {
+    if (this.account?.oauth?.provider === 'nous') {
+      return this.account.oauth.inferenceBaseURL || this.config.baseURL || '';
+    }
+    return super.baseURL;
   }
 
   async _getAuthToken() {
@@ -29,7 +37,7 @@ export class OpenAIAdapter extends BaseAdapter {
     return headers;
   }
 
-  async complete(requestPayload, targetModel) {
+  async complete(requestPayload, targetModel, options = {}) {
     const url = `${this.baseURL}/chat/completions`;
     const body = {
       ...requestPayload,
@@ -42,6 +50,7 @@ export class OpenAIAdapter extends BaseAdapter {
       method: 'POST',
       headers,
       body: JSON.stringify(body),
+      signal: options.signal,
     });
 
     if (!response.ok) {
@@ -79,7 +88,7 @@ export class OpenAIAdapter extends BaseAdapter {
     return data;
   }
 
-  async stream(requestPayload, targetModel, res) {
+  async stream(requestPayload, targetModel, res, options = {}) {
     const url = `${this.baseURL}/chat/completions`;
     const body = {
       ...requestPayload,
@@ -92,6 +101,7 @@ export class OpenAIAdapter extends BaseAdapter {
       method: 'POST',
       headers,
       body: JSON.stringify(body),
+      signal: options.signal,
     });
 
     if (!response.ok) {
@@ -115,7 +125,7 @@ export class OpenAIAdapter extends BaseAdapter {
 
     const reader = response.body.getReader();
     const decoder = new TextDecoder('utf-8');
-    let totalGeneratedLength = 0;
+    let hasGeneratedOutput = false;
     let buffer = '';
 
     try {
@@ -133,14 +143,13 @@ export class OpenAIAdapter extends BaseAdapter {
           if (line.startsWith('data: ') && !line.includes('[DONE]')) {
             try {
               const parsed = JSON.parse(line.slice(6));
-              const delta = parsed.choices?.[0]?.delta?.content || '';
-              if (delta) totalGeneratedLength += delta.length;
+              if (hasGeneratedStreamOutput(parsed)) hasGeneratedOutput = true;
             } catch {}
           }
         }
       }
 
-      if (totalGeneratedLength === 0) {
+      if (!hasGeneratedOutput) {
         const apkakal = {
           error: {
             message: 'APKAKALSA PEDIK',

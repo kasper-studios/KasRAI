@@ -46,7 +46,14 @@ class KasDBStore {
   }
 
   async _resetDb() {
-    console.warn(`[kasdb:${this.name}] ⚠️ Corrupted DB detected — resetting to initial data.`);
+    console.warn(`[kasdb:${this.name}] ⚠️ Corrupted DB detected — backing up the file, then resetting to initial data.`);
+    // Keep the corrupted file around for manual recovery instead of silently
+    // destroying every stored provider/account/token.
+    try {
+      const backupPath = `${this.filePath}.corrupt-${new Date().toISOString().replace(/[:.]/g, '-')}`;
+      fs.copyFileSync(this.filePath, backupPath);
+      console.warn(`[kasdb:${this.name}] Corrupted DB backed up to ${backupPath}`);
+    } catch {}
     try { fs.unlinkSync(this.filePath); } catch {}
     this.db = new AsyncDB({ filename: this.dbPath, data: this.initialData });
   }
@@ -143,6 +150,33 @@ const defaultProviders = {
       'claude-sonnet-4-6',
       'claude-opus-4-6-thinking',
     ],
+    accounts: [],
+  },
+  // OpenAI-compatible provider (formerly custom codex entry)
+  codex: {
+    id: 'codex',
+    name: 'Codex',
+    preset: 'codex',
+    type: 'openai',
+    baseURL: 'https://api.codex.com/v1',
+    enabled: true,
+    priority: 10,
+    rateLimitCooldownSec: 60,
+    models: [],
+    accounts: [],
+  },
+  // Nous Portal: device-code OAuth, ad-hoc inference endpoint from JWT
+  nous: {
+    id: 'nous',
+    name: 'Nous Portal',
+    preset: 'nous',
+    type: 'openai',
+    authType: 'oauth_device_code',
+    baseURL: 'https://inference-api.nousresearch.com/v1',
+    enabled: true,
+    priority: 10,
+    rateLimitCooldownSec: 60,
+    models: [],
     accounts: [],
   },
 };

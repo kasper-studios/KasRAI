@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import { BaseAdapter } from './base.js';
 import { getValidAuthToken } from '../utils/oauth.js';
 
-const ANTIGRAVITY_UPSTREAM_ALIASES = {
+export const ANTIGRAVITY_UPSTREAM_ALIASES = {
   // Flash 3.8 (high, medium, low)
   'gemini-3.8-flash': 'gemini-3.8-flash-high',
   'gemini-3.8-flash-high': 'gemini-3.8-flash-high',
@@ -47,13 +47,33 @@ export const ANTIGRAVITY_BASE_URLS = [
   'https://daily-cloudcode-pa.sandbox.googleapis.com',
 ];
 
+/**
+ * Effective upstream base URL for a configured provider baseURL.
+ * Legacy prod host and empty values are normalized to the primary (daily) host.
+ */
+export function resolveAntigravityBaseURL(rawBaseURL) {
+  if (!rawBaseURL || rawBaseURL === 'https://cloudcode-pa.googleapis.com') {
+    return ANTIGRAVITY_BASE_URLS[0];
+  }
+  return rawBaseURL;
+}
+
+/**
+ * Map a client-facing model name to its upstream Cloud Code ID (exported so quota
+ * tracking can use the same keys the completion path uses).
+ */
+export function resolveAntigravityUpstreamModel(model) {
+  if (!model) return 'gemini-3.8-flash-high';
+  // Strip antigravity/ prefix
+  const clean = model.replace(/^antigravity\//i, '').trim();
+  return ANTIGRAVITY_UPSTREAM_ALIASES[clean] || clean;
+}
+
 export class AntigravityAdapter extends BaseAdapter {
   constructor(providerConfig, activeAccount = null) {
     super(providerConfig);
     this.account = activeAccount;
-    this._customBaseURL = (!super.baseURL || super.baseURL === 'https://cloudcode-pa.googleapis.com')
-      ? ANTIGRAVITY_BASE_URLS[0]
-      : super.baseURL;
+    this._customBaseURL = resolveAntigravityBaseURL(super.baseURL);
   }
 
   get baseURL() {
@@ -65,10 +85,7 @@ export class AntigravityAdapter extends BaseAdapter {
   }
 
   _resolveUpstreamModel(model) {
-    if (!model) return 'gemini-3.8-flash-high';
-    // Strip antigravity/ prefix
-    const clean = model.replace(/^antigravity\//i, '').trim();
-    return ANTIGRAVITY_UPSTREAM_ALIASES[clean] || clean;
+    return resolveAntigravityUpstreamModel(model);
   }
 
   async _getAuthToken() {
@@ -426,14 +443,6 @@ export class AntigravityAdapter extends BaseAdapter {
 
     // Convert tools if provided
     if (Array.isArray(requestPayload.tools) && requestPayload.tools.length > 0) {
-      import('node:fs').then((fs) => {
-        try {
-          fs.writeFileSync(
-            '/data/data/com.termux/files/home/KasRAI/all_tools_debug.json',
-            JSON.stringify(requestPayload.tools, null, 2)
-          );
-        } catch {}
-      });
       const functionDeclarations = [];
       for (let tIdx = 0; tIdx < requestPayload.tools.length; tIdx++) {
         const tool = requestPayload.tools[tIdx];
@@ -449,17 +458,6 @@ export class AntigravityAdapter extends BaseAdapter {
           tName = tool.name;
           tDesc = tool.description || '';
           rawParams = tool.parameters || tool.input_schema;
-        }
-
-        if (tIdx === 10) {
-          import('node:fs').then((fs) => {
-            try {
-              fs.writeFileSync(
-                '/data/data/com.termux/files/home/KasRAI/tool10_debug.json',
-                JSON.stringify({ name: tName, description: tDesc, rawParams }, null, 2)
-              );
-            } catch {}
-          });
         }
 
         functionDeclarations.push({
@@ -500,28 +498,6 @@ export class AntigravityAdapter extends BaseAdapter {
     const inner = this._convertOpenAIToAntigravity(requestPayload, upstreamModel);
     const isGoogleCloudCode = this.baseURL.includes('cloudcode-pa.googleapis.com');
 
-    // 💾 Авто-дамп полного запроса для Opus в отдельный файл
-    if (upstreamModel.includes('opus') || (targetModel && targetModel.includes('opus'))) {
-      import('node:fs').then((fs) => {
-        try {
-          const dumpData = {
-            timestamp: new Date().toISOString(),
-            targetModel,
-            upstreamModel,
-            clientRequest: requestPayload,
-            upstreamEnvelopeRequest: inner,
-          };
-          fs.writeFileSync(
-            '/data/data/com.termux/files/home/KasRAI/opus_request_dump.json',
-            JSON.stringify(dumpData, null, 2)
-          );
-          console.log('[Antigravity] 💾 Полный дамп запроса Opus сохранен в opus_request_dump.json!');
-        } catch (e) {
-          console.error('[Antigravity] Ошибка сохранения дампа Opus:', e.message);
-        }
-      });
-    }
-
     if (isGoogleCloudCode) {
       const projectId = this.account?.projectId || this.account?.oauth?.projectId || 'aicode-consumers';
       return {
@@ -540,7 +516,7 @@ export class AntigravityAdapter extends BaseAdapter {
     };
   }
 
-  async complete(requestPayload, targetModel) {
+  async complete(requestPayload, targetModel, options = {}) {
     const token = await this._getAuthToken();
     const isGoogleCloudCode = this.baseURL.includes('cloudcode-pa.googleapis.com');
     const headers = {
@@ -574,6 +550,7 @@ export class AntigravityAdapter extends BaseAdapter {
           method: 'POST',
           headers,
           body: JSON.stringify(payload),
+          signal: options.signal,
         });
 
         if (res.ok) {
@@ -598,6 +575,8 @@ export class AntigravityAdapter extends BaseAdapter {
           throw lastError;
         }
       } catch (err) {
+        // Aborted externally (router timeout / client disconnect): do not try other bases
+        if (err.name === 'AbortError') throw err;
         lastError = err;
         if (err.status && err.status !== 429 && err.status < 500) {
           throw err;
@@ -782,7 +761,7 @@ export class AntigravityAdapter extends BaseAdapter {
     }
   }
 
-  async stream(requestPayload, targetModel, res) {
+  async stream(requestPayload, targetModel, res, options = {}) {
     const token = await this._getAuthToken();
     const isGoogleCloudCode = this.baseURL.includes('cloudcode-pa.googleapis.com');
     const headers = {
@@ -803,6 +782,13 @@ export class AntigravityAdapter extends BaseAdapter {
       ? [this.baseURL, ...ANTIGRAVITY_BASE_URLS.filter((u) => u !== this.baseURL)]
       : [this.baseURL];
 
+    // No overall stream timeout: the caller (router) decides when to abort via options.signal.
+    // We only guard against a silent upstream with an idle-between-chunks timeout.
+    const idleMs = Number(options.idleMs) > 0 ? Number(options.idleMs) : 0;
+    const idleController = new AbortController();
+    const externalSignals = [options.signal, idleController.signal].filter(Boolean);
+    const fetchSignal = externalSignals.length > 1 ? AbortSignal.any(externalSignals) : externalSignals[0];
+
     let response = null;
     let lastError = null;
 
@@ -816,7 +802,7 @@ export class AntigravityAdapter extends BaseAdapter {
           method: 'POST',
           headers,
           body: JSON.stringify(payload),
-          signal: AbortSignal.timeout(60000),
+          signal: fetchSignal,
         });
 
         if (upstreamRes.ok) {
@@ -840,6 +826,8 @@ export class AntigravityAdapter extends BaseAdapter {
           throw lastError;
         }
       } catch (err) {
+        // Aborted externally (client disconnect / router first-chunk timeout): do not try other bases
+        if (err.name === 'AbortError') throw err;
         lastError = err;
         if (err.status && err.status !== 429 && err.status < 500) {
           throw err;
@@ -889,7 +877,31 @@ export class AntigravityAdapter extends BaseAdapter {
 
     try {
       while (true) {
-        const { done, value } = await reader.read();
+        // Idle timeout: abort if upstream stays silent for too long BETWEEN chunks
+        // (the first-chunk wait is enforced by the router; long generation is allowed).
+        let idleTimer = null;
+        let idleTimedOut = false;
+        if (idleMs > 0) {
+          idleTimer = setTimeout(() => {
+            idleTimedOut = true;
+            idleController.abort();
+          }, idleMs);
+        }
+        let readResult;
+        try {
+          readResult = await reader.read();
+        } catch (readErr) {
+          if (idleTimedOut) {
+            const tErr = new Error(`Stream idle timeout (${idleMs}ms without data from upstream)`);
+            tErr.status = 504;
+            tErr.isTimeout = true;
+            throw tErr;
+          }
+          throw readErr;
+        } finally {
+          if (idleTimer) clearTimeout(idleTimer);
+        }
+        const { done, value } = readResult;
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
 
@@ -961,7 +973,9 @@ export class AntigravityAdapter extends BaseAdapter {
           },
         };
         res.write(`event: error\ndata: ${JSON.stringify(apkakal)}\n\n`);
-        throw new Error('APKAKALSA PEDIK (0 tokens streamed)');
+        const zeroTokErr = new Error('APKAKALSA PEDIK (0 tokens streamed)');
+        zeroTokErr.status = 999;
+        throw zeroTokErr;
       }
 
       res.write('data: [DONE]\n\n');

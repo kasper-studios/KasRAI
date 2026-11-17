@@ -2,7 +2,7 @@ import express from 'express';
 import crypto from 'node:crypto';
 import { providersDB, routesDB, configDB } from '../db/index.js';
 import { getRecentLogs, getLogById, clearLogs } from '../utils/logger.js';
-import { buildOAuthUrl, exchangeOAuthCode } from '../utils/oauth.js';
+import { buildOAuthUrl, exchangeOAuthCode, startNousDeviceAuthorization, pollNousDeviceAuthorization, cancelNousDeviceAuthorization, OAUTH_PRESETS } from '../utils/oauth.js';
 import { importFromOmniroute } from '../utils/omnirouteImport.js';
 import { checkAccountQuota, checkAllQuotas } from '../utils/quotaChecker.js';
 import { validateAccount, validateAllAccounts } from '../utils/accountValidator.js';
@@ -93,9 +93,9 @@ apiRouter.get('/providers', async (req, res) => {
           cooldownUntil: a.cooldownUntil || 0,
           cooldownRemainingSec,
           cooldownReason: a.cooldownReason || null,
-          hasKey: !!a.apiKey,
+          hasKey: !!a.apiKey || !!a.oauth?.accessToken,
           hasOAuth: !!(a.oauth?.accessToken || a.oauth?.refreshToken),
-          maskedKey: a.apiKey ? `${a.apiKey.slice(0, 4)}...${a.apiKey.slice(-4)}` : '',
+          maskedKey: a.apiKey ? `${a.apiKey.slice(0, 4)}...${a.apiKey.slice(-4)}` : a.oauth?.provider === 'nous' && a.oauth?.accessToken ? 'Nous OAuth' : '',
           priority: a.priority || 0,
           quota: a.quota || null,
           subscriptionTier: a.quota?.subscriptionTier || null,
@@ -109,6 +109,7 @@ apiRouter.get('/providers', async (req, res) => {
         name: p.name,
         preset: p.preset || p.id,
         type: p.type || 'openai',
+        authType: p.authType || null,
         baseURL: p.baseURL,
         enabled: p.enabled,
         priority: p.priority || 10,
@@ -131,16 +132,21 @@ apiRouter.post('/providers', async (req, res) => {
     if (!id || !name) {
       return res.status(400).json({ error: 'id and name are required' });
     }
+    const providerId = id.toLowerCase().trim();
+    if (await providersDB.get(providerId)) {
+      return res.status(409).json({ error: `Provider "${providerId}" already exists` });
+    }
 
     const host = req.get('host') || `localhost:${CONFIG.PORT}`;
     const redirectUri = `http://${host}/oauth/callback`;
 
     const newProvider = {
-      id: id.toLowerCase().trim(),
+      id: providerId,
       name: name.trim(),
       preset: preset || id.toLowerCase().trim(),
-      type: type || (preset === 'antigravity' ? 'antigravity' : preset === 'anthropic' ? 'anthropic' : preset === 'gemini' ? 'gemini' : 'openai'),
-      baseURL: baseURL || (preset === 'antigravity' ? 'https://cloudcode-pa.googleapis.com' : 'https://api.openai.com/v1'),
+      type: type || (preset === 'antigravity' ? 'antigravity' : preset === 'codex' ? 'openai' : preset === 'nous' ? 'openai' : preset === 'anthropic' ? 'anthropic' : preset === 'gemini' ? 'gemini' : 'openai'),
+      authType: authType || (preset === 'nous' ? 'oauth_device_code' : null),
+      baseURL: baseURL || (preset === 'antigravity' ? 'https://daily-cloudcode-pa.googleapis.com' : preset === 'codex' ? 'https://api.codex.com/v1' : preset === 'nous' ? 'https://inference-api.nousresearch.com/v1' : 'https://api.openai.com/v1'),
       enabled: true,
       priority: 15,
       rateLimitCooldownSec: parseInt(rateLimitCooldownSec || '60', 10),
@@ -206,6 +212,31 @@ apiRouter.post('/providers/:id/oauth/start', (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// POST /api/oauth/nous/device - Start Nous Portal device-code OAuth
+apiRouter.post('/oauth/nous/device', async (req, res) => {
+  try {
+    res.json(await startNousDeviceAuthorization());
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
+// POST /api/oauth/nous/poll - Poll/complete a Nous Portal device-code OAuth flow
+apiRouter.post('/oauth/nous/poll', async (req, res) => {
+  try {
+    const { state } = req.body || {};
+    if (!state || typeof state !== 'string') return res.status(400).json({ error: 'state is required' });
+    res.json(await pollNousDeviceAuthorization(state));
+  } catch (err) {
+    res.status(502).json({ status: 'error', error: err.message });
+  }
+});
+
+// DELETE /api/oauth/nous/device/:state - Cancel a pending Nous Portal device flow
+apiRouter.delete('/oauth/nous/device/:state', (req, res) => {
+  res.json({ success: cancelNousDeviceAuthorization(req.params.state) });
 });
 
 // POST/PUT/PATCH /api/providers/:id - Update provider settings
@@ -561,6 +592,13 @@ const handleSaveRoute = async (req, res) => {
     const existing = (await routesDB.get(alias)) || {};
 
     const { description, rotationMode, mode, targets, enabled } = req.body;
+    if (Array.isArray(targets)) {
+      const providers = await providersDB.getAll();
+      const invalidTarget = targets.find((target) => !target?.provider || !target?.model || !providers[target.provider]);
+      if (invalidTarget) {
+        return res.status(400).json({ error: 'Each route target must include a valid provider and model' });
+      }
+    }
     const routeData = {
       ...existing,
       alias,

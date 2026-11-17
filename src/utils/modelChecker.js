@@ -1,5 +1,6 @@
 import { providersDB } from '../db/index.js';
 import { getValidAuthToken } from './oauth.js';
+import { resolveAntigravityBaseURL } from '../adapters/antigravity.js';
 
 export const BUILTIN_FALLBACK_MODELS = {
   antigravity: [
@@ -65,7 +66,8 @@ export async function checkProviderModels(providerId) {
       if (!token) throw new Error('Could not obtain valid token for Antigravity');
 
       const projectId = activeAccount.projectId || activeAccount.oauth?.projectId || 'aicode-consumers';
-      const res = await fetch('https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels', {
+      const base = resolveAntigravityBaseURL(provider.baseURL);
+      const res = await fetch(`${base}/v1internal:fetchAvailableModels`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -152,7 +154,8 @@ export async function checkProviderModels(providerId) {
       const baseURL = (provider.baseURL || '').replace(/\/+$/, '');
       if (!baseURL) throw new Error('Missing baseURL');
 
-      const key = provider.apiKey || provider.accounts?.[0]?.apiKey;
+      const activeAccount = (provider.accounts || []).find((account) => account.status === 'active' || !account.status) || provider.accounts?.[0];
+      const key = provider.apiKey || activeAccount?.apiKey || (activeAccount ? await getValidAuthToken(provider.id, activeAccount) : '');
       const headers = { 'Content-Type': 'application/json' };
       if (key) {
         headers['Authorization'] = `Bearer ${key}`;

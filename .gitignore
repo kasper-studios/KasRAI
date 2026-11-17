@@ -1,6 +1,5 @@
 # Dependencies
 node_modules/
-package-lock.json
 
 # Persistent Databases & Runtime Data (STRICT: NEVER OVERWRITE)
 data/

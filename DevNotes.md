@@ -77,6 +77,7 @@ Stable core prototype implemented and active. Gateway server runs on port 20250 
 - [x] Quota & tier checker for Antigravity, OpenRouter, and Gemini (`GET /api/quota`, `GET /api/bot/quota`, per-account quota)
 - [x] Live health validator & OAuth refresh token lifecycle (`src/utils/accountValidator.js`, `POST /api/health-check`, `POST /api/bot/health-check`)
 - [x] Native OAuth direct login & token paste (`POST /api/oauth/paste`, `GET /api/oauth/login/:id`)
+- [x] Nous Portal device-code OAuth adapter (`POST /api/oauth/nous/device`, `POST /api/oauth/nous/poll`): Hermes-compatible `device/code` + single-use refresh-token header; validate JWT `inference:invoke` before storing; refresh rotation saved to KasDB.
 - [x] Multi-account rotation pool per provider (API Key and OAuth tokens)
 - [x] Automatic quota & 429 rate limit cooldown tracking with auto-recovery
 - [x] Configurable provider rate limit cooldown (`rateLimitCooldownSec`) when delay cannot be parsed from upstream headers
@@ -105,7 +106,7 @@ Stable core prototype implemented and active. Gateway server runs on port 20250 
 - [x] Bilingual Documentation: English `README.md` as primary and `README.ru.md` as Russian edition with mutual cross-references
 - [x] Inter-Agent Communication Bus (`/api/agent/hermes/task`, `/api/agent/dirom/emit`): two-way bridge between Dirom (Termux Android Node) and Hermes (Desktop Assistant) with persistent Task Inbox in `config.db`
 - [x] Git Auto-Updater Engine (`src/utils/gitUpdater.js`): git repo initialized with strict `.gitignore` (protecting `data/*.db` and credentials); auto-pulls new commits every 60s; performs safe in-place hot module reload when commit lacks "REQUIRED FULL RESTART" tag, or graceful process restart when tag is present; UI badge `git:commit` with manual check button
-- [ ] Connect live accounts (Antigravity OAuth / OpenAI / Gemini keys)
+- [ ] Connect remaining live accounts (Antigravity OAuth / OpenAI / Gemini keys)
 - [ ] Wire Discord bot command handlers to `/api/bot/*` endpoints
 
 ### Planned / TODO
@@ -281,7 +282,8 @@ All requests and metrics are recorded into `@kasperenok/kasdb`.
 ### Management interfaces
 - `GET /api/status`: System stats, active providers, recent latency.
 - `GET/POST /api/providers`: Configure upstream providers, presets, and API keys.
-- `POST /api/providers/:id/oauth/start`: Returns `{ authUrl, state }` for Google/Antigravity OAuth login.
+- `POST /api/providers/:id/oauth/start`: Returns `{ authUrl, state }` for configured authorization-code providers.
+- `POST /api/oauth/nous/device`, `POST /api/oauth/nous/poll`: Start and poll Nous Portal device-code login; device code remains server-side, user authorization URL and code only are returned.
 - `GET/POST /api/routes`: Configure model routing, rotation modes (`priority`, `round-robin`, `least-used`, `random`), and fallback chains.
 - `GET /api/logs`: View recent request logs.
 
@@ -302,8 +304,45 @@ All requests and metrics are recorded into `@kasperenok/kasdb`.
 4. Streaming completion test: verified via `curl -N`.
 5. Dashboard validation: verify UI loads and communicates with `/api/*`.
 
----
+### 12. Codex Integration
+- Added `codex` OpenAI-compatible provider to the dashboard preset dropdown (type `openai`, baseURL `https://api.codex.com/v1`), to `src/app.js` presets, and to `src/db/index.js` defaults.
+- Live gateway: `PATCH /api/providers/codex` set `priority=10` and `rateLimitCooldownSec=60`; `/api/providers` now returns the codex provider with the updated config.
+- Real test: `POST /v1/chat/completions` with model `codex/deepseek-v4.1-flash-free` returned `503 kasrai_no_viable_accounts` — the only codex account is marked `invalid` (OAuth refresh token revoked), so no key is available yet.
+- Remaining: add a codex API key through the dashboard and run the non-streaming completion test to mark this integration verified.
 
-**Last Updated:** 2026-09-08  
+### 13. Nous Portal Integration
+- Added `nous` OpenAI-compatible provider to the dashboard preset dropdown (device-code OAuth via Portal), to `src/app.js` presets, and to `src/db/index.js` defaults.
+- Live gateway: `POST /api/providers` created `nous` with `baseURL=https://inference-api.nousresearch.com/v1`; `/api/providers` now returns it with no accounts yet.
+- Nous Portal OAuth flow is implemented in `src/utils/oauth.js` (`startNousDeviceAuthorization`, `pollNousDeviceAuthorization`, device-code refresh), so the dashboard will guide the user through Portal login and save an account with an `inference:invoke` JWT.
+- Dashboard UX: Nous device-code login is started from its provider account-pool card; route creation assigns a selected default provider and supports explicit `provider/model` targets. Provider/route creation surfaces API error messages; provider IDs cannot silently overwrite existing entries, and routes reject invalid targets.
+
+### 14. Timeouts & Quota Consistency Overhaul (2026-11-17)
+
+**Timeouts — configurable at the call site (request > provider config > env):**
+- Removed all hardcoded 60s limits. Old behavior: `router.js` first-chunk 60s, `router.js` non-stream 60s, `antigravity.js` `AbortSignal.timeout(60000)` killed the WHOLE stream at 60s even mid-generation.
+- `src/utils/timeoutResolver.js`: per-attempt resolution — request body fields (`first_chunk_timeout_ms`, `timeout_ms`, `idle_timeout_ms`) → provider config fields (`firstChunkTimeoutMs`, `completionTimeoutMs`, `idleTimeoutMs`, settable via `PUT /api/providers/:id`) → env defaults `FIRST_CHUNK_TIMEOUT_MS` / `COMPLETION_TIMEOUT_MS` / `STREAM_IDLE_TIMEOUT_MS` (default 120000; legacy `TIMEOUT_MS` kept as alias). Range 1s–600s. Override fields are stripped from payloads before they reach upstream adapters.
+- Router: non-stream timer is now cleared in `finally`; timeout aborts the upstream attempt via a real AbortSignal passed into adapters (`complete(payload, model, {signal})`, `stream(payload, model, res, {signal, firstChunkMs, idleMs})`) — upstream requests no longer keep generating (and burning quota) after a timeout or client disconnect.
+- Antigravity `stream()`: no overall signal timeout anymore; idle-between-chunks timeout implemented in the read loop (`options.idleMs`). Long reasoning/generation can now run arbitrarily long as long as chunks keep flowing.
+- Abandoned stream attempts drop their writes/`end` via the router proxy (no interleaving of a dead attempt's chunks into the next candidate's stream). Client disconnect (`res.on('close')`) aborts the current attempt and stops failover rotation.
+
+**Quota consistency ("no quota from one place, works from another"):**
+- Root causes fixed: (1) quota cache stored under upstream model IDs (`gemini-pro-agent`) while router filtered by client names (`gemini-3.1-pro-high`) — accountManager now checks both keys via exported `resolveAntigravityUpstreamModel`; (2) false 0% heuristic ("resetTime without fraction => exhausted") — quotaChecker now marks such entries `unknown: true` and they never filter accounts; (3) quota/health/model checkers hardcoded to `daily-cloudcode-pa` while completions rotated daily→prod→sandbox — all now use `resolveAntigravityBaseURL(provider.baseURL)` (same host as generation); (4) two independent token refresh implementations (oauth.js vs accountValidator.js, different margins, no dedup) — validator now uses the shared `getValidAuthToken`, which got in-flight refresh dedup per account (Google rotates refresh tokens; parallel refreshes used to produce `invalid_grant` and kill accounts); curl-fallback refresh (token in argv, execSync event-loop block) removed.
+- Model-family cooldown split: `gemini` → `gemini-pro` / `gemini-flash` (429 on pro no longer freezes flash). Stale `cooldown` state without `cooldownUntil` is auto-healed to `active`.
+- Requires quota refresh from dashboard once to rewrite legacy cached false-0% entries.
+
+**Critical fixes:**
+- `POST /api/oauth/paste`: `OAUTH_PRESETS` was used without import → ReferenceError 500 on every call. Fixed.
+- `omnirouteImport.js`: missing `crypto` import crashed import on rows without `id`. Fixed.
+- Debug dumps removed from `antigravity.js` (every tools-request and every opus request was written to a hardcoded Termux path).
+- Zero-token guard in streaming now sets `err.status = 999`; router matches both exact and prefixed `APKAKALSA PEDIK` messages.
+- `kasdb` corruption reset now backs up the corrupted file to `data/<name>.db.corrupt-<timestamp>` before resetting (no more silent total loss of providers/accounts/tokens).
+- Repo trash removed: `_probe_local.mjs`, `.test-nous-*.db`, `kasrai.log`; `package-lock.json` un-ignored.
+- Broken `.git` repaired (missing `HEAD`, empty `refs/`): restored to `main` @ `56d31f1` (== origin/main); gitUpdater works again.
+- `package.json`: added `"test": "node --test"` (passes: 3/3) and `engines.node >= 20`.
+- **node_modules was corrupted** (empty `depd`, broken nested `isarray` in kasdb — interrupted npm on Nov 8; any restart would crash): fully reinstalled via `npm install`. Running old-code instance must be restarted to pick up all changes.
+
+**Verified live (isolated copy on port 20251 + mock upstream):** non-stream `timeout_ms=2000` → 504 in 2.2s with exact value in message; stream `first_chunk_timeout_ms=2000` → 504 in 2.0s; provider `completionTimeoutMs=3000` → 504 in 3.0s; 65s stream completes fully (old code cut at 60s); client disconnect aborts upstream; `/api/oauth/paste` returns 400 (no ReferenceError); live `/api/quota` OK for 7 antigravity accounts (Google AI Pro, 20 models) via provider baseURL.
+
+**Last Updated:** 2026-11-17  
 **Project Status:** bootstrap / active development  
-**DevNotes Version:** v0.1
+**DevNotes Version:** v0.3

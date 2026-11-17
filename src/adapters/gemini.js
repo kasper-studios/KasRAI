@@ -272,7 +272,7 @@ export class GeminiAdapter extends BaseAdapter {
     return payload;
   }
 
-  async complete(requestPayload, targetModel) {
+  async complete(requestPayload, targetModel, options = {}) {
     const token = await this._getAuthToken();
     const isOAuth = token.startsWith('ya29.');
     const url = isOAuth
@@ -290,6 +290,7 @@ export class GeminiAdapter extends BaseAdapter {
       method: 'POST',
       headers,
       body: JSON.stringify(payload),
+      signal: options.signal,
     });
 
     if (!response.ok) {
@@ -376,7 +377,7 @@ export class GeminiAdapter extends BaseAdapter {
     };
   }
 
-  async stream(requestPayload, targetModel, res) {
+  async stream(requestPayload, targetModel, res, options = {}) {
     const token = await this._getAuthToken();
     const isOAuth = token.startsWith('ya29.');
     const url = isOAuth
@@ -394,6 +395,7 @@ export class GeminiAdapter extends BaseAdapter {
       method: 'POST',
       headers,
       body: JSON.stringify(payload),
+      signal: options.signal,
     });
 
     if (!response.ok) {

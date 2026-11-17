@@ -1,5 +1,6 @@
 import { providersDB } from '../db/index.js';
 import { getValidAuthToken, OAUTH_PRESETS } from './oauth.js';
+import { resolveAntigravityBaseURL } from '../adapters/antigravity.js';
 
 export async function validateAccount(providerId, account) {
   if (!account) return { healthy: false, status: 'invalid', message: 'No account provided' };
@@ -16,7 +17,9 @@ export async function validateAccount(providerId, account) {
     const expiresAt = oauth.expiresAt ? new Date(oauth.expiresAt).getTime() : 0;
     let wasRefreshed = false;
 
-    // A. If token expired or close to expiring (< 2 min), force refresh via refreshToken
+    // A. If token expired or close to expiring (< 2 min), refresh via the SHARED OAuth
+    // lifecycle (getValidAuthToken). One refresh implementation + in-flight dedup:
+    // parallel refreshes used to race each other and kill rotating refresh tokens.
     if (!token || expiresAt <= now + 120000) {
       if (!oauth.refreshToken) {
         account.status = 'invalid';
@@ -26,64 +29,21 @@ export async function validateAccount(providerId, account) {
       }
 
       console.log(`[Validator] 🔄 Refreshing OAuth token for '${account.name}' (${providerId})...`);
-      const tokenEndpoint = oauth.tokenEndpoint || OAUTH_PRESETS.antigravity.tokenUrl;
-      const clientId = oauth.clientId || OAUTH_PRESETS.antigravity.clientId;
-      const clientSecret = oauth.clientSecret || OAUTH_PRESETS.antigravity.clientSecret;
-
       try {
-        let refreshRes;
-        try {
-          const bodyParams = new URLSearchParams({
-            grant_type: 'refresh_token',
-            refresh_token: oauth.refreshToken,
-          });
-          if (clientId) bodyParams.set('client_id', clientId);
-          if (clientSecret) bodyParams.set('client_secret', clientSecret);
-
-          refreshRes = await fetch(tokenEndpoint, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: bodyParams.toString(),
-            signal: AbortSignal.timeout(5000),
-          });
-        } catch (fetchErr) {
-          // Fallback to curl if Node.js undici network stack hits dual-stack IPv6/TLS timeout
-          const { execSync } = await import('node:child_process');
-          const curlBody = `grant_type=refresh_token&refresh_token=${encodeURIComponent(oauth.refreshToken)}&client_id=${encodeURIComponent(clientId)}&client_secret=${encodeURIComponent(clientSecret)}`;
-          const rawCurlOut = execSync(`curl -s -X POST "${tokenEndpoint}" -H "Content-Type: application/x-www-form-urlencoded" -d "${curlBody}"`, {
-            encoding: 'utf-8',
-            timeout: 10000,
-          });
-          const parsedCurl = JSON.parse(rawCurlOut);
-          refreshRes = {
-            ok: !parsedCurl.error,
-            status: parsedCurl.error ? 400 : 200,
-            json: async () => parsedCurl,
-            text: async () => rawCurlOut,
-          };
+        const refreshed = await getValidAuthToken(providerId, account);
+        if (refreshed && refreshed !== token) {
+          token = refreshed;
+          wasRefreshed = true;
+          console.log(`[Validator] ✅ Successfully refreshed token for '${account.name}'!`);
+        } else if (!refreshed && !token) {
+          // Refresh produced nothing and there is no token to probe with
+          account.status = 'invalid';
+          account.invalidReason = 'OAuth refresh не вернул access_token';
+          await saveAccountState(providerId, account);
+          return { healthy: false, status: 'invalid', latencyMs: Date.now() - start, message: account.invalidReason };
+        } else {
+          token = refreshed || token;
         }
-
-        if (!refreshRes.ok) {
-          const errText = await refreshRes.text();
-          if (errText.includes('invalid_grant') || refreshRes.status === 400 || refreshRes.status === 401) {
-            account.status = 'invalid';
-            account.invalidReason = 'OAuth Refresh Token отозван или недействителен (invalid_grant)';
-            await saveAccountState(providerId, account);
-            return { healthy: false, status: 'invalid', latencyMs: Date.now() - start, message: account.invalidReason };
-          }
-          throw new Error(`Token refresh failed HTTP ${refreshRes.status}: ${errText.slice(0, 150)}`);
-        }
-
-        const tokenData = await refreshRes.json();
-        token = tokenData.access_token;
-        oauth.accessToken = token;
-        oauth.expiresAt = new Date(Date.now() + (tokenData.expires_in || 3600) * 1000).toISOString();
-        if (tokenData.refresh_token) {
-          oauth.refreshToken = tokenData.refresh_token;
-        }
-        account.oauth = oauth;
-        wasRefreshed = true;
-        console.log(`[Validator] ✅ Successfully refreshed token for '${account.name}'!`);
       } catch (err) {
         return { healthy: false, status: 'error', latencyMs: Date.now() - start, message: `Ошибка обновления токена: ${err.message}` };
       }
@@ -92,8 +52,10 @@ export async function validateAccount(providerId, account) {
     // B. Probe Antigravity or Google API endpoint to verify token validity
     try {
       if (prov === 'antigravity') {
+        const providerCfg = await providersDB.get(providerId);
+        const probeBase = resolveAntigravityBaseURL(providerCfg?.baseURL);
         const projectId = account.projectId || oauth.projectId || 'aicode-consumers';
-        const probeRes = await fetch('https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels', {
+        const probeRes = await fetch(`${probeBase}/v1internal:fetchAvailableModels`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -103,7 +65,7 @@ export async function validateAccount(providerId, account) {
             'x-client-version': '4.2.0',
           },
           body: JSON.stringify({ project: projectId }),
-          signal: AbortSignal.timeout(3500),
+          signal: AbortSignal.timeout(10000),
         });
 
         const latencyMs = Date.now() - start;
@@ -145,6 +107,27 @@ export async function validateAccount(providerId, account) {
           return { healthy: false, status: 'error', latencyMs, message: `Upstream HTTP ${probeRes.status}` };
         }
       } else {
+        if (oauth.provider === 'nous') {
+          const probeRes = await fetch(`${(oauth.inferenceBaseURL || OAUTH_PRESETS.nous.inferenceBaseURL).replace(/\/+$/, '')}/models`, {
+            headers: { Authorization: `Bearer ${token}` },
+            signal: AbortSignal.timeout(8000),
+          });
+          const latencyMs = Date.now() - start;
+          if (probeRes.ok || probeRes.status === 429) {
+            account.status = 'active';
+            account.invalidReason = null;
+            await saveAccountState(providerId, account);
+            return { healthy: true, status: probeRes.status === 429 ? 'cooldown' : 'active', wasRefreshed, latencyMs, message: `Nous Portal inference endpoint replied HTTP ${probeRes.status}` };
+          }
+          if (probeRes.status === 401 || probeRes.status === 403) {
+            account.status = 'invalid';
+            account.invalidReason = `Nous Portal inference access rejected (${probeRes.status})`;
+            await saveAccountState(providerId, account);
+            return { healthy: false, status: 'invalid', wasRefreshed, latencyMs, message: account.invalidReason };
+          }
+          return { healthy: false, status: 'error', latencyMs, message: `Nous Portal HTTP ${probeRes.status}` };
+        }
+
         // Generic OAuth probe via userinfo
         const probeRes = await fetch('https://www.googleapis.com/oauth2/v1/userinfo?alt=json', {
           headers: { Authorization: `Bearer ${token}` },

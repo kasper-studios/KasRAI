@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { execSync } from 'node:child_process';
-import { scryptSync, createDecipheriv } from 'node:crypto';
+import { scryptSync, createDecipheriv, randomUUID } from 'node:crypto';
 import { providersDB } from '../db/index.js';
 import { OAUTH_PRESETS } from './oauth.js';
 
@@ -244,7 +244,7 @@ export async function importFromOmniroute() {
     const resolvedProjectId = row.project_id || specData.projectId || 'aicode-consumers';
 
     const accountItem = {
-      id: row.id || crypto.randomUUID(),
+      id: row.id || randomUUID(),
       name: email,
       authType: isOAuth ? 'oauth' : 'key',
       apiKey: !isOAuth && apiKey ? apiKey : '',

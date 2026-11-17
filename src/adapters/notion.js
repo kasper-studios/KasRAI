@@ -199,7 +199,7 @@ export class NotionAdapter extends BaseAdapter {
     };
   }
 
-  async complete(requestPayload, targetModel) {
+  async complete(requestPayload, targetModel, options = {}) {
     const upstreamModel = this._resolveUpstreamModel(targetModel);
     const url = `${this.baseURL || 'https://app.notion.com'}/api/v3/runInferenceTranscript`;
     const headers = this._buildHeaders();
@@ -211,6 +211,7 @@ export class NotionAdapter extends BaseAdapter {
       method: 'POST',
       headers,
       body: JSON.stringify(payload),
+      signal: options.signal,
     });
 
     if (!response.ok) {
@@ -301,7 +302,7 @@ export class NotionAdapter extends BaseAdapter {
     };
   }
 
-  async stream(requestPayload, targetModel, res) {
+  async stream(requestPayload, targetModel, res, options = {}) {
     const upstreamModel = this._resolveUpstreamModel(targetModel);
     const url = `${this.baseURL || 'https://app.notion.com'}/api/v3/runInferenceTranscript`;
     const headers = this._buildHeaders();
@@ -313,6 +314,7 @@ export class NotionAdapter extends BaseAdapter {
       method: 'POST',
       headers,
       body: JSON.stringify(payload),
+      signal: options.signal,
     });
 
     if (!response.ok) {

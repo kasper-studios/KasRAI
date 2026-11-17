@@ -70,7 +70,7 @@ export class AnthropicAdapter extends BaseAdapter {
     return payload;
   }
 
-  async complete(requestPayload, targetModel) {
+  async complete(requestPayload, targetModel, options = {}) {
     const url = `${this.baseURL}/messages`;
     const payload = this._convertOpenAIToAnthropic(requestPayload, targetModel);
     const headers = await this._getHeaders();
@@ -79,6 +79,7 @@ export class AnthropicAdapter extends BaseAdapter {
       method: 'POST',
       headers,
       body: JSON.stringify(payload),
+      signal: options.signal,
     });
 
     if (!response.ok) {
@@ -146,7 +147,7 @@ export class AnthropicAdapter extends BaseAdapter {
     };
   }
 
-  async stream(requestPayload, targetModel, res) {
+  async stream(requestPayload, targetModel, res, options = {}) {
     const url = `${this.baseURL}/messages`;
     const payload = {
       ...this._convertOpenAIToAnthropic(requestPayload, targetModel),
@@ -158,6 +159,7 @@ export class AnthropicAdapter extends BaseAdapter {
       method: 'POST',
       headers,
       body: JSON.stringify(payload),
+      signal: options.signal,
     });
 
     if (!response.ok) {

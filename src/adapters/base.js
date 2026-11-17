@@ -22,16 +22,18 @@ export class BaseAdapter {
   /**
    * Execute non-streaming completion.
    * Must return standard OpenAI ChatCompletion object.
+   * @param {object} [options] - optional `{ signal }` (AbortSignal) to cancel the upstream request.
    */
-  async complete(requestPayload, targetModel) {
+  async complete(requestPayload, targetModel, options = {}) {
     throw new Error('Method complete() must be implemented by adapter subclass');
   }
 
   /**
    * Execute streaming completion.
    * Pipes normalized OpenAI SSE chunks to Express response stream.
+   * @param {object} [options] - optional `{ signal, idleMs }` (AbortSignal from the router + idle-between-chunks timeout).
    */
-  async stream(requestPayload, targetModel, res) {
+  async stream(requestPayload, targetModel, res, options = {}) {
     throw new Error('Method stream() must be implemented by adapter subclass');
   }
 }

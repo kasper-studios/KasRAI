@@ -3,6 +3,7 @@ import { createAdapter } from '../adapters/index.js';
 import { accountManager } from './accountManager.js';
 import { modelStateEngine } from './modelStateEngine.js';
 import { logCall, startActiveRequest, updateActiveRequest, finishActiveRequest } from '../utils/logger.js';
+import { resolveTimeouts, stripTimeoutFields } from '../utils/timeoutResolver.js';
 import crypto from 'node:crypto';
 
 export class RouterEngine {
@@ -120,6 +121,8 @@ export class RouterEngine {
    */
   async executeChat(requestPayload, res, isStream = false) {
     const requestedModel = requestPayload.model || 'default';
+    // Client-side timeout overrides must never leak into upstream provider payloads
+    const upstreamPayload = stripTimeoutFields(requestPayload);
     const candidates = await this.resolveTargets(requestedModel);
 
     if (candidates.length === 0) {
@@ -143,6 +146,19 @@ export class RouterEngine {
     const startTime = Date.now();
     const requestId = crypto.randomUUID();
 
+    // Client disconnect tracking: abort the current upstream attempt when the client goes away
+    // (otherwise the upstream request keeps generating and burns quota for nobody).
+    let clientDisconnected = false;
+    let attemptAbortController = null;
+    const onResClose = () => {
+      if (!res.writableEnded) {
+        clientDisconnected = true;
+        attemptAbortController?.abort();
+        console.warn(`[Router] Client disconnected for request ${requestId}; aborting current attempt.`);
+      }
+    };
+    res.on('close', onResClose);
+
     // Estimate input prompt tokens from text length (~4 chars per token)
     let estimatedPromptTokens = 0;
     if (Array.isArray(requestPayload.messages)) {
@@ -163,6 +179,8 @@ export class RouterEngine {
       const candidate = candidates[i];
       const attemptStart = Date.now();
       const adapter = createAdapter(candidate.provider, candidate.account);
+      const timeouts = resolveTimeouts(requestPayload, candidate.provider);
+      attemptAbortController = new AbortController();
 
       updateActiveRequest(requestId, {
         routedProvider: candidate.provider.id,
@@ -180,16 +198,25 @@ export class RouterEngine {
         if (isStream) {
           // Wrap stream with deferred response handling: don't commit headers to client
           // until the first byte/chunk actually arrives from upstream!
-          // If first chunk takes >= 60s, abort and rotate to next candidate account!
+          // If first chunk takes >= firstChunkMs, abort and rotate to next candidate account!
+          // Timeout is resolved per attempt: request field > provider config > env default.
           let clientHeadersCommitted = false;
           let firstChunkTimer = null;
-          const streamAbortController = new AbortController();
+          const streamAbortController = attemptAbortController;
+          // This attempt is considered abandoned once it timed out or the client left:
+          // the (still running in background) adapter must not write into the client res anymore.
+          let attemptAbandoned = false;
 
           // Intercept proxy response object passed to adapter.stream
           const streamProxyRes = new Proxy(res, {
             get(target, prop) {
               if (prop === 'write') {
                 return function (chunk, encoding, cb) {
+                  if (attemptAbandoned || clientDisconnected || target.destroyed) {
+                    // Drop chunks from an abandoned attempt instead of interleaving
+                    // them into the next candidate's stream or a destroyed socket.
+                    return true;
+                  }
                   if (!clientHeadersCommitted) {
                     if (firstChunkTimer) clearTimeout(firstChunkTimer);
                     clientHeadersCommitted = true;
@@ -201,6 +228,14 @@ export class RouterEngine {
                     }
                   }
                   return target.write(chunk, encoding, cb);
+                };
+              }
+              if (prop === 'end') {
+                return function (...args) {
+                  // A background-abandoned attempt must not terminate the client connection
+                  // that a subsequent attempt may already be streaming into.
+                  if (attemptAbandoned || clientDisconnected) return;
+                  return target.end(...args);
                 };
               }
               if (prop === 'setHeader' || prop === 'flushHeaders') {
@@ -220,19 +255,24 @@ export class RouterEngine {
           const timeoutPromise = new Promise((_, reject) => {
             firstChunkTimer = setTimeout(() => {
               if (!clientHeadersCommitted) {
+                attemptAbandoned = true;
                 streamAbortController.abort();
-                const err = new Error('First chunk response timeout (60s exceeded)');
+                const err = new Error(`First chunk response timeout (${timeouts.firstChunkMs}ms exceeded)`);
                 err.status = 504;
                 err.isTimeout = true;
                 reject(err);
               }
-            }, 60000);
+            }, timeouts.firstChunkMs);
           });
 
           let streamResult;
           try {
             streamResult = await Promise.race([
-              adapter.stream(requestPayload, candidate.targetModel, streamProxyRes),
+              adapter.stream(upstreamPayload, candidate.targetModel, streamProxyRes, {
+                signal: streamAbortController.signal,
+                firstChunkMs: timeouts.firstChunkMs,
+                idleMs: timeouts.idleMs,
+              }),
               timeoutPromise,
             ]);
           } finally {
@@ -264,19 +304,27 @@ export class RouterEngine {
           });
           return;
         } else {
+          const completeAbortController = attemptAbortController;
+          let completionTimer = null;
           const timeoutPromise = new Promise((_, reject) => {
-            setTimeout(() => {
-              const err = new Error('Model completion response timeout (60s exceeded)');
+            completionTimer = setTimeout(() => {
+              completeAbortController.abort(); // kill the upstream request so it stops burning quota
+              const err = new Error(`Model completion response timeout (${timeouts.completionMs}ms exceeded)`);
               err.status = 504;
               err.isTimeout = true;
               reject(err);
-            }, 60000);
+            }, timeouts.completionMs);
           });
 
-          const responseData = await Promise.race([
-            adapter.complete(requestPayload, candidate.targetModel),
-            timeoutPromise,
-          ]);
+          let responseData;
+          try {
+            responseData = await Promise.race([
+              adapter.complete(upstreamPayload, candidate.targetModel, { signal: completeAbortController.signal }),
+              timeoutPromise,
+            ]);
+          } finally {
+            if (completionTimer) clearTimeout(completionTimer);
+          }
           const latencyMs = Date.now() - attemptStart;
           await accountManager.recordAccountSuccess(candidate.provider.id, candidate.account.id, latencyMs);
           await logCall({
@@ -312,7 +360,7 @@ export class RouterEngine {
         errors.push(errDetail);
 
         // Check if error is ZERO-TOKEN GUARD
-        if (err.message === 'APKAKALSA PEDIK' || err.status === 999) {
+        if (err.status === 999 || err.message?.startsWith('APKAKALSA PEDIK')) {
           console.error('[Router] 💩 APKAKALSA PEDIK: Upstream returned 0 tokens!');
           await logCall({
             requestId,
@@ -386,7 +434,7 @@ export class RouterEngine {
           // so router immediately falls back to next non-hung account without re-trying this one right away!
           await accountManager.triggerAccountCooldown(candidate.provider.id, candidate.account.id, {
             status: 504,
-            message: 'Model response hung (timeout 60s exceeded)',
+            message: `Model response hung (${err.message})`,
             cooldownMs: 90000,
           }, candidate.targetModel);
         }
@@ -394,6 +442,12 @@ export class RouterEngine {
         // If response headers already sent, cannot fallback
         if (res.headersSent) {
           console.error('[Router] Headers already sent to client; stream aborted.');
+          return;
+        }
+
+        // Nobody is listening anymore: stop rotating through candidates (and burning quota).
+        if (clientDisconnected) {
+          console.warn('[Router] Client disconnected; stopping failover rotation.');
           return;
         }
       }
@@ -433,6 +487,7 @@ export class RouterEngine {
       });
     }
   } finally {
+    res.off('close', onResClose);
     finishActiveRequest(requestId);
   }
 }

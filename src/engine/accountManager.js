@@ -1,19 +1,26 @@
 import { providersDB } from '../db/index.js';
 import { parseRetryAfterMs } from '../utils/retryParser.js';
 import { checkAccountQuota } from '../utils/quotaChecker.js';
+import { resolveAntigravityUpstreamModel } from '../adapters/antigravity.js';
+
+const PROVIDER_PREFIX_RE = /^(antigravity|gemini|openai|anthropic|kasrai)\//i;
 
 class AccountManager {
   /**
-   * Helper: determine model family/bucket ('gemini', 'claude', or exact model)
+   * Helper: determine model family/bucket ('gemini-pro', 'gemini-flash', 'claude', or exact model).
+   * Pro and Flash are separate quota buckets upstream: a 429 on one must not freeze the other.
    */
   _getModelFamily(modelName) {
     if (!modelName) return 'default';
-    const clean = modelName.toLowerCase().replace(/^(antigravity|gemini|openai|anthropic)\//i, '').trim();
+    const clean = modelName.toLowerCase().replace(PROVIDER_PREFIX_RE, '').trim();
     if (clean.includes('claude') || clean.includes('sonnet') || clean.includes('opus')) {
       return 'claude';
     }
-    if (clean.includes('gemini') || clean.includes('flash') || clean.includes('pro')) {
-      return 'gemini';
+    if (clean.includes('pro')) {
+      return 'gemini-pro';
+    }
+    if (clean.includes('gemini') || clean.includes('flash')) {
+      return 'gemini-flash';
     }
     return clean;
   }
@@ -35,7 +42,14 @@ class AccountManager {
     // Check cooldown expirations (global & per-family)
     for (const acc of accounts) {
       if (acc.status === 'cooldown') {
-        if (acc.cooldownUntil && now >= acc.cooldownUntil) {
+        if (!acc.cooldownUntil) {
+          // Cooldown state without an expiry date is stale (e.g. set by the health-checker
+          // without cooldownUntil) — heal it instead of leaving the account dead forever.
+          console.log(`[AccountManager] Stale cooldown without expiry on '${acc.name || acc.id}'. Restoring to active.`);
+          acc.status = 'active';
+          acc.cooldownReason = null;
+          stateChanged = true;
+        } else if (now >= acc.cooldownUntil) {
           console.log(`[AccountManager] Global cooldown expired for '${acc.name || acc.id}'. Restoring to active.`);
           acc.status = 'active';
           acc.cooldownUntil = 0;
@@ -62,7 +76,10 @@ class AccountManager {
     }
 
     // Filter active accounts (not in global cooldown, and not in model-family cooldown)
-    const cleanModel = targetModel ? targetModel.replace(/^(antigravity|gemini|openai|anthropic)\//i, '').trim() : null;
+    const cleanModel = targetModel ? targetModel.replace(PROVIDER_PREFIX_RE, '').trim() : null;
+    // Quota cache keys are upstream model IDs (e.g. 'gemini-pro-agent'), so check the
+    // alias-resolved name too — otherwise remapped models never match the cache.
+    const upstreamModel = cleanModel ? resolveAntigravityUpstreamModel(cleanModel) : null;
 
     const viable = accounts.filter((acc) => {
       if (acc.status === 'disabled' || acc.status === 'invalid' || acc.status === 'banned') {
@@ -72,14 +89,15 @@ class AccountManager {
       if (acc.status === 'cooldown' && acc.cooldownUntil && acc.cooldownUntil > now) {
         return false;
       }
-      // Check family-specific cooldown (e.g. only 'gemini' is frozen, but 'claude' is free!)
+      // Check family-specific cooldown (e.g. only 'gemini-pro' is frozen, but 'claude' is free!)
       if (acc.modelCooldowns && acc.modelCooldowns[family] && acc.modelCooldowns[family] > now) {
         return false;
       }
-      // Check cached model quota if available: if this specific model is 0% and reset is in the future, skip it!
-      if (cleanModel && acc.quota?.modelsQuota && acc.quota.modelsQuota[cleanModel]) {
-        const mq = acc.quota.modelsQuota[cleanModel];
-        if (mq.remainingFraction === 0 && mq.resetTime) {
+      // Check cached model quota if available: if this specific model is EXPLICITLY 0%
+      // and reset is in the future, skip it! ('unknown' entries must never filter.)
+      if (cleanModel && acc.quota?.modelsQuota) {
+        const mq = acc.quota.modelsQuota[cleanModel] || acc.quota.modelsQuota[upstreamModel];
+        if (mq && mq.unknown !== true && mq.remainingFraction === 0 && mq.resetTime) {
           const resetMs = Date.parse(mq.resetTime);
           if (!isNaN(resetMs) && resetMs > now) {
             return false; // Skip account for THIS model because quota is genuinely exhausted!
@@ -193,16 +211,17 @@ class AccountManager {
         const freshQuota = await checkAccountQuota(providerId, acc);
 
         if (freshQuota?.ok && freshQuota.modelsQuota) {
-          const cleanModel = targetModel
-            ? targetModel.replace(/^(antigravity|gemini|openai|anthropic)\//i, '').trim()
-            : null;
+          const cleanModel = targetModel ? targetModel.replace(PROVIDER_PREFIX_RE, '').trim() : null;
+          const upstreamModel = cleanModel ? resolveAntigravityUpstreamModel(cleanModel) : null;
 
           let worstResetTime = null;
 
           for (const [mId, mq] of Object.entries(freshQuota.modelsQuota)) {
             const mFam = this._getModelFamily(mId);
-            const modelMatches = mFam === family || (cleanModel && (mId === cleanModel || mId.startsWith(cleanModel)));
-            if (modelMatches && mq.remainingFraction === 0 && mq.resetTime) {
+            const modelMatches =
+              mFam === family ||
+              (cleanModel && (mId === cleanModel || mId === upstreamModel || mId.startsWith(cleanModel)));
+            if (modelMatches && mq.unknown !== true && mq.remainingFraction === 0 && mq.resetTime) {
               const resetMs = Date.parse(mq.resetTime);
               if (!isNaN(resetMs) && resetMs > Date.now()) {
                 if (!worstResetTime || resetMs > Date.parse(worstResetTime)) {
