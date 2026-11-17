@@ -254,7 +254,9 @@ export async function checkAccountQuota(providerId, account) {
           // Split the live buckets into the two upstream windows: 5-hour rolling and weekly.
           const windows = {};
           for (const b of liveBuckets || []) {
-            const key = _classifyQuotaWindow(b);
+            // Unlimited entries (fraction 1, no reset window) are not a quota window —
+            // keep them out of fiveHour/weekly so the UI doesn't label them "weekly".
+            const key = b.resetTime == null ? 'unlimited' : _classifyQuotaWindow(b);
             const prev = windows[key];
             // Keep the more exhausted duplicate within the same window
             if (!prev || (b.remainingFraction !== null && (prev.remainingFraction === null || b.remainingFraction < prev.remainingFraction))) {
