@@ -343,6 +343,14 @@ All requests and metrics are recorded into `@kasperenok/kasdb`.
 
 **Verified live (isolated copy on port 20251 + mock upstream):** non-stream `timeout_ms=2000` → 504 in 2.2s with exact value in message; stream `first_chunk_timeout_ms=2000` → 504 in 2.0s; provider `completionTimeoutMs=3000` → 504 in 3.0s; 65s stream completes fully (old code cut at 60s); client disconnect aborts upstream; `/api/oauth/paste` returns 400 (no ReferenceError); live `/api/quota` OK for 7 antigravity accounts (Google AI Pro, 20 models) via provider baseURL.
 
+### 15. Antigravity dual-window quotas (5h + weekly)
+
+Upstream reports TWO quota buckets per model: a 5-hour rolling window and a weekly window. Previously they were collapsed into one entry (a `Map` keyed by `modelId` — the second bucket silently overwrote the first).
+- `quotaChecker`: buckets are collected per model (array, no overwrite) and classified into `fiveHour` / `weekly` windows — explicit window-type fields (`quotaType`/`windowType`/`period`/`type`) win, otherwise reset distance (<=24h -> 5h window, else weekly). `modelsQuota[mId]` now carries `fiveHour` and `weekly` sub-objects; the top-level `remainingFraction`/`resetTime` is the binding (most exhausted) window, so legacy consumers keep working.
+- `accountManager`: account skip filter and post-429 cooldown extension (`worstResetTime`) consider each window separately — an exhausted weekly bucket stretches the cooldown to the WEEKLY reset, not the 5h one.
+- Dashboard quota modal renders two labeled bars per model (`5ч` / `нед`) with per-window fraction and reset time; models without windows fall back to the single legacy bar; unknown windows show `?`.
+- Verify once after deploy: open a quota modal and confirm both windows show real distinct fractions/resets; if upstream uses an explicit window-type field not covered here, check the raw JSON tab and extend `_classifyQuotaWindow` in `quotaChecker.js`.
+
 **Last Updated:** 2026-11-17  
 **Project Status:** bootstrap / active development  
-**DevNotes Version:** v0.3
+**DevNotes Version:** v0.4

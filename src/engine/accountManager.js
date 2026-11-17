@@ -93,15 +93,19 @@ class AccountManager {
       if (acc.modelCooldowns && acc.modelCooldowns[family] && acc.modelCooldowns[family] > now) {
         return false;
       }
-      // Check cached model quota if available: if this specific model is EXPLICITLY 0%
-      // and reset is in the future, skip it! ('unknown' entries must never filter.)
+      // Check cached model quota if available: skip the account for THIS model when any
+      // quota window (5-hour rolling, weekly, or legacy merged fraction) is EXPLICITLY 0%
+      // with a reset in the future. 'unknown' entries must never filter.
       if (cleanModel && acc.quota?.modelsQuota) {
         const mq = acc.quota.modelsQuota[cleanModel] || acc.quota.modelsQuota[upstreamModel];
-        if (mq && mq.unknown !== true && mq.remainingFraction === 0 && mq.resetTime) {
-          const resetMs = Date.parse(mq.resetTime);
-          if (!isNaN(resetMs) && resetMs > now) {
-            return false; // Skip account for THIS model because quota is genuinely exhausted!
-          }
+        if (mq && mq.unknown !== true) {
+          const windows = [mq, mq.fiveHour, mq.weekly].filter(Boolean);
+          const exhausted = windows.some((w) => {
+            if (w.unknown === true || w.remainingFraction !== 0 || !w.resetTime) return false;
+            const resetMs = Date.parse(w.resetTime);
+            return !isNaN(resetMs) && resetMs > now;
+          });
+          if (exhausted) return false; // quota genuinely exhausted in at least one window
         }
       }
       return true;
@@ -221,11 +225,16 @@ class AccountManager {
             const modelMatches =
               mFam === family ||
               (cleanModel && (mId === cleanModel || mId === upstreamModel || mId.startsWith(cleanModel)));
-            if (modelMatches && mq.unknown !== true && mq.remainingFraction === 0 && mq.resetTime) {
-              const resetMs = Date.parse(mq.resetTime);
-              if (!isNaN(resetMs) && resetMs > Date.now()) {
-                if (!worstResetTime || resetMs > Date.parse(worstResetTime)) {
-                  worstResetTime = mq.resetTime;
+            if (!modelMatches) continue;
+            // Consider both quota windows (5h rolling + weekly) separately: if the weekly
+            // bucket is exhausted, the cooldown must stretch to the WEEKLY reset, not the 5h one.
+            for (const w of [mq, mq?.fiveHour, mq?.weekly]) {
+              if (w && w.unknown !== true && w.remainingFraction === 0 && w.resetTime) {
+                const resetMs = Date.parse(w.resetTime);
+                if (!isNaN(resetMs) && resetMs > Date.now()) {
+                  if (!worstResetTime || resetMs > Date.parse(worstResetTime)) {
+                    worstResetTime = w.resetTime;
+                  }
                 }
               }
             }

@@ -561,16 +561,58 @@ function openQuotaModal(providerId, accId, data) {
     modelsList.innerHTML = '<div class="text-gray-500 italic py-4 text-center">Модели без ограничений квот или данные отсутствуют</div>';
   } else {
     entries.forEach(([mId, info]) => {
-      const pct = Math.max(0, Math.min(100, info.remainingPercent !== undefined ? info.remainingPercent : Math.round((info.remainingFraction || 1) * 100)));
-      
-      let barColor = 'bg-emerald-500';
-      let textColor = 'text-emerald-400';
-      if (pct <= 20) {
-        barColor = 'bg-rose-500';
-        textColor = 'text-rose-400';
-      } else if (pct <= 50) {
-        barColor = 'bg-amber-500';
-        textColor = 'text-amber-400';
+      const pct = info.unknown
+        ? null
+        : Math.max(0, Math.min(100, info.remainingPercent !== undefined && info.remainingPercent !== null ? info.remainingPercent : Math.round((info.remainingFraction || 1) * 100)));
+
+      const colorsFor = (p) => {
+        let barColor = 'bg-emerald-500';
+        let textColor = 'text-emerald-400';
+        if (p <= 20) {
+          barColor = 'bg-rose-500';
+          textColor = 'text-rose-400';
+        } else if (p <= 50) {
+          barColor = 'bg-amber-500';
+          textColor = 'text-amber-400';
+        }
+        return { barColor, textColor };
+      };
+
+      // Antigravity reports two quota windows per model: 5-hour rolling + weekly.
+      const windowRow = (label, icon, w) => {
+        const wUnknown = w.unknown === true || w.remainingFraction === null || w.remainingFraction === undefined;
+        const wpct = wUnknown ? null : Math.max(0, Math.min(100, Math.round(w.remainingFraction * 100)));
+        const { barColor, textColor } = colorsFor(wpct === null ? 100 : wpct);
+        const reset = w.resetTime
+          ? `<span class="text-[10px] text-gray-500">${new Date(w.resetTime).toLocaleTimeString()} ${new Date(w.resetTime).toLocaleDateString()}</span>`
+          : '';
+        const pctHtml = wUnknown
+          ? '<span class="font-bold text-gray-500">?</span>'
+          : `<span class="font-bold ${textColor}">${wpct}%</span>`;
+        return `
+          <div class="flex items-center justify-between text-[10px]">
+            <span class="font-mono text-gray-400 w-10 shrink-0"><i class="fa-solid ${icon} mr-1"></i>${label}</span>
+            <div class="flex-1 mx-2 bg-dark-bg rounded-full h-1.5 overflow-hidden border border-dark-cardBorder/40">
+              <div class="${barColor} h-1.5 rounded-full" style="width: ${wpct === null ? 0 : wpct}%"></div>
+            </div>
+            ${reset}
+            ${pctHtml}
+          </div>`;
+      };
+
+      const hasWindows = !!(info.fiveHour || info.weekly);
+      let barsHtml;
+      if (hasWindows) {
+        barsHtml = [
+          info.fiveHour ? windowRow('5ч', 'fa-bolt', info.fiveHour) : '',
+          info.weekly ? windowRow('нед', 'fa-calendar-week', info.weekly) : '',
+        ].join('');
+      } else {
+        const { barColor } = colorsFor(pct === null ? 100 : pct);
+        barsHtml = `
+          <div class="w-full bg-dark-bg rounded-full h-2 overflow-hidden border border-dark-cardBorder/40">
+            <div class="${barColor} h-2 rounded-full transition-all duration-500" style="width: ${pct === null ? 0 : pct}%"></div>
+          </div>`;
       }
 
       const itemEl = document.createElement('div');
@@ -578,16 +620,14 @@ function openQuotaModal(providerId, accId, data) {
       itemEl.innerHTML = `
         <div class="flex items-center justify-between text-xs">
           <div class="flex items-center space-x-2 truncate">
-            <span class="font-mono font-bold text-gray-200 truncate">${info.displayName || mId}</span>
+            <span class="font-mono font-bold text-gray-200 truncate">${escapeHtml(info.displayName || mId)}</span>
           </div>
           <div class="flex items-center space-x-2 font-mono">
             ${info.resetTime ? `<span class="text-[10px] text-gray-500">${new Date(info.resetTime).toLocaleTimeString()}</span>` : ''}
-            <span class="font-bold ${textColor}">${pct}%</span>
+            <span class="font-bold ${colorsFor(pct === null ? 100 : pct).textColor}">${pct === null ? '?' : pct + '%'}</span>
           </div>
         </div>
-        <div class="w-full bg-dark-bg rounded-full h-2 overflow-hidden border border-dark-cardBorder/40">
-          <div class="${barColor} h-2 rounded-full transition-all duration-500" style="width: ${pct}%"></div>
-        </div>
+        ${barsHtml}
       `;
       modelsList.appendChild(itemEl);
     });

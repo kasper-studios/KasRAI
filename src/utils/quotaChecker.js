@@ -35,6 +35,23 @@ export function extractNotionCookies(account) {
 /**
  * Live quota and tier checker for providers and accounts
  */
+/**
+ * Classify a quota bucket into its upstream window: 'fiveHour' (rolling 5h window)
+ * or 'weekly'. Antigravity reports two buckets per model; an explicit window-type
+ * field wins, otherwise fall back to reset distance (the 5h window always resets
+ * within <=5h, the weekly within <=7d — the 24h threshold separates them cleanly).
+ */
+function _classifyQuotaWindow(bucket, now = Date.now()) {
+  const wt = bucket.windowType;
+  if (wt) {
+    if (wt.includes('week')) return 'weekly';
+    if (wt.includes('hour') || wt.includes('5h') || wt.includes('short') || wt.includes('daily')) return 'fiveHour';
+  }
+  const rt = bucket.resetTime ? Date.parse(bucket.resetTime) : NaN;
+  if (!isNaN(rt) && rt - now <= 24 * 3600 * 1000) return 'fiveHour';
+  return 'weekly';
+}
+
 export async function checkAccountQuota(providerId, account) {
   if (!account) return { supported: false, message: 'Account not found' };
 
@@ -211,9 +228,13 @@ export async function checkAccountQuota(providerId, account) {
           if (Array.isArray(uqData.buckets)) {
             for (const b of uqData.buckets) {
               if (b.modelId) {
-                userQuotaMap.set(b.modelId, {
+                // A model can have TWO buckets: the 5-hour rolling window and the weekly one.
+                // Collect them all — overwriting would silently drop one of the windows.
+                if (!userQuotaMap.has(b.modelId)) userQuotaMap.set(b.modelId, []);
+                userQuotaMap.get(b.modelId).push({
                   remainingFraction: typeof b.remainingFraction === 'number' ? b.remainingFraction : null,
                   resetTime: b.resetTime || null,
+                  windowType: (b.quotaType || b.windowType || b.period || b.type || '').toString().toLowerCase() || null,
                 });
               }
             }
@@ -228,26 +249,52 @@ export async function checkAccountQuota(providerId, account) {
       let earliestResetTime = null;
 
       for (const [mId, mInfo] of Object.entries(models)) {
-        if (mInfo.quotaInfo || userQuotaMap.has(mId)) {
-          const liveInfo = userQuotaMap.get(mId);
-          let frac;
+        const liveBuckets = userQuotaMap.get(mId);
+        if (mInfo.quotaInfo || (liveBuckets && liveBuckets.length > 0)) {
+          // Split the live buckets into the two upstream windows: 5-hour rolling and weekly.
+          const windows = {};
+          for (const b of liveBuckets || []) {
+            const key = _classifyQuotaWindow(b);
+            const prev = windows[key];
+            // Keep the more exhausted duplicate within the same window
+            if (!prev || (b.remainingFraction !== null && (prev.remainingFraction === null || b.remainingFraction < prev.remainingFraction))) {
+              windows[key] = {
+                remainingFraction: b.remainingFraction,
+                resetTime: b.resetTime,
+                unknown: b.remainingFraction === null,
+              };
+            }
+          }
+
+          let frac = null;
           let unknown = false;
-          if (liveInfo && liveInfo.remainingFraction !== null) {
-            frac = liveInfo.remainingFraction;
+          let resetTime = null;
+          const windowList = Object.values(windows);
+          if (windowList.length > 0) {
+            // Live buckets are the source of truth; top-level fraction = the binding
+            // (most exhausted) window so the router logic keeps working unchanged.
+            const known = windowList.filter((w) => w.unknown !== true && w.remainingFraction !== null);
+            if (known.length > 0) {
+              frac = Math.min(...known.map((w) => w.remainingFraction));
+              const binding = known.find((w) => w.remainingFraction === frac);
+              resetTime = binding?.resetTime || null;
+            } else {
+              unknown = true;
+              resetTime = windowList[0]?.resetTime || null;
+            }
           } else if (typeof mInfo.quotaInfo?.remainingFraction === 'number') {
             frac = mInfo.quotaInfo.remainingFraction;
-          } else if (mInfo.quotaInfo?.resetTime || liveInfo?.resetTime) {
+            resetTime = mInfo.quotaInfo.resetTime || null;
+          } else if (mInfo.quotaInfo?.resetTime) {
             // Upstream reported a resetTime with no fraction: state is UNKNOWN.
             // Do NOT fake 0% here — false "exhausted" entries made the router skip
             // accounts whose quota was actually fine.
-            frac = null;
             unknown = true;
+            resetTime = mInfo.quotaInfo.resetTime;
           } else {
             // Truly unlimited model with no reset time
             frac = 1;
           }
-
-          const resetTime = liveInfo?.resetTime || mInfo.quotaInfo?.resetTime || null;
 
           modelsQuota[mId] = {
             displayName: mInfo.displayName || mId,
@@ -255,6 +302,8 @@ export async function checkAccountQuota(providerId, account) {
             remainingPercent: frac === null ? null : Math.round(frac * 100),
             unknown,
             resetTime,
+            fiveHour: windows.fiveHour || null,
+            weekly: windows.weekly || null,
           };
           if (frac !== null) {
             totalFraction += frac;
