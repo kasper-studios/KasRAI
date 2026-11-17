@@ -103,9 +103,15 @@ export class GitUpdater {
       );
 
       const commits = commitLogs.split('\n').filter(Boolean);
-      const requiresFullRestart = commits.some(
-        (c) => c.includes('REQUIRED FULL RESTART') || c.includes('FULL RESTART')
+      // Check FULL commit bodies (%B), not just subjects: the REQUIRED FULL RESTART
+      // tag usually lives in the message body — subject-only check silently skipped
+      // every tagged commit and the process kept running outdated code.
+      const { stdout: commitBodies } = await execAsync(
+        `git log ${this.currentCommit}..${this.latestRemoteCommit} --pretty=format:"%B"`,
+        { cwd: ROOT_DIR }
       );
+      const requiresFullRestart =
+        commitBodies.includes('REQUIRED FULL RESTART') || commitBodies.includes('FULL RESTART');
 
       // Inspect which files were changed
       const { stdout: changedFilesRaw } = await execAsync(
