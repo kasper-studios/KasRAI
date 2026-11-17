@@ -251,6 +251,10 @@ class AccountManager {
               cooldownMs = remainingMs;
             }
           } else {
+            // RPM/burst limit: the quota windows are healthy, the account recovers within
+            // seconds-to-minutes — a long cooldown here just blacks out the whole pool
+            // while parallel agent traffic keeps hammering the remaining accounts.
+            cooldownMs = Math.min(cooldownMs, 20000);
             console.log(`[AccountManager] ⚡ RPM burst limit for '${acc.name}' [${family}]. Short cooldown: ${Math.round(cooldownMs / 1000)}s`);
           }
         }

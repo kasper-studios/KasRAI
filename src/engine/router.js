@@ -6,6 +6,24 @@ import { logCall, startActiveRequest, updateActiveRequest, finishActiveRequest }
 import { resolveTimeouts, stripTimeoutFields } from '../utils/timeoutResolver.js';
 import crypto from 'node:crypto';
 
+// In-flight attempt tracking per account: parallel requests used to grab the same
+// highest-priority account simultaneously and Google burst-limits the rest into 429s.
+const accountInflight = new Map();
+const DEFAULT_MAX_CONCURRENT_PER_ACCOUNT = 1;
+
+function inflightKey(candidate) {
+  return `${candidate.provider.id}:${candidate.account?.id || 'default'}`;
+}
+
+function inflightCount(candidate) {
+  return accountInflight.get(inflightKey(candidate)) || 0;
+}
+
+function maxPerAccount(provider) {
+  const n = parseInt(provider?.maxConcurrentPerAccount, 10);
+  return Number.isFinite(n) && n >= 1 ? n : DEFAULT_MAX_CONCURRENT_PER_ACCOUNT;
+}
+
 export class RouterEngine {
   /**
    * Resolves requested model into candidate execution targets with account rotation.
@@ -181,6 +199,16 @@ export class RouterEngine {
       const adapter = createAdapter(candidate.provider, candidate.account);
       const timeouts = resolveTimeouts(requestPayload, candidate.provider);
       attemptAbortController = new AbortController();
+
+      // Anti-herd: skip accounts that already carry a concurrent attempt, unless
+      // nothing freer is left (then the least busy one is still tried — never 503 on this).
+      const maxConc = maxPerAccount(candidate.provider);
+      if (inflightCount(candidate) >= maxConc && candidates.slice(i + 1).some((c) => inflightCount(c) < maxPerAccount(c.provider))) {
+        errors.push(`[${candidate.provider.id}:${candidate.account?.name || candidate.account?.id || 'default'}]: skipped (account busy, ${inflightCount(candidate)} in-flight)`);
+        continue;
+      }
+      const iKey = inflightKey(candidate);
+      accountInflight.set(iKey, inflightCount(candidate) + 1);
 
       updateActiveRequest(requestId, {
         routedProvider: candidate.provider.id,
@@ -450,6 +478,9 @@ export class RouterEngine {
           console.warn('[Router] Client disconnected; stopping failover rotation.');
           return;
         }
+      } finally {
+        // Release the in-flight slot (runs on success return, error and rotation alike)
+        accountInflight.set(iKey, Math.max(0, (accountInflight.get(iKey) || 1) - 1));
       }
     }
 
