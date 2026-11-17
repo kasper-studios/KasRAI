@@ -354,6 +354,16 @@ Upstream reports TWO quota buckets per model: a 5-hour rolling window and a week
 - Live failure analysis (Hermes 502 at 22:52 vs Dirom 200 on the same model 47s apart): both requests STARTED simultaneously (~22:52:20 — log timestamps are END times) and both targeted the same top-priority account; one won the stream, the other got RESOURCE_EXHAUSTED on all 4 accounts (Google burst/concurrency limits; the 5h window had just reset at 22:50:47). This was the anti-herd gap. Fixed in `6f03cb6`: router tracks in-flight attempts per account and skips busy accounts (`maxConcurrentPerAccount` provider field, default 1), falling back to the least busy one instead of failing; antigravity burst-429 (fresh quota shows no exhausted window) cooldown capped at 20s so a burst storm no longer blacks out the whole pool.
 - Verify once after deploy: open a quota modal and confirm both windows show real distinct fractions/resets; if upstream uses an explicit window-type field not covered here, check the raw JSON tab and extend `_classifyQuotaWindow` in `quotaChecker.js`.
 
+### 16. Deployment pipeline bug: gitUpdater skipped tagged restarts (2026-11-17)
+
+Root cause of "fixes deployed but gateway behaves the same all day": `gitUpdater.checkForUpdates` built the commit list with `--pretty=format:"%h - %s (%an)"` — SUBJECTS ONLY. The `REQUIRED FULL RESTART` tag lived in commit BODIES, so `requiresFullRestart` never matched; every pull ended in the fake "Safe hot-refresh mode" and the process kept running outdated code for hours (uptime 5530s while repo was already at the latest commit).
+- Fixed: restart check now runs against full commit bodies (`--pretty=format:"%B"`).
+- Transition trick: the fix commit itself carries the tag in its SUBJECT so the OLD code on the gateway still matched it and restarted once.
+- Verification via LAN: `/api/git/check` reported `currentCommit: c571376` while uptime was 5530s — repo updated, process stale. After fix: uptime dropped, all evening fixes live.
+- Practical takeaway for deploys: put the tag in the SUBJECT anyway (old processes only see subjects), keep the body check as the robust path.
+
+Live state after the fix (2026-11-17 ~21:32 UTC): windows healthy on 4/6 accounts (dimakukic1 & kikban92 weekly-exhausted until Nov 21/22), parallel test requests spread across accounts via rotation (fallback worked), burst-429 after a just-finished stream rotates to another account in ~2s. Remaining watch item: if 502s reappear, `candidateErrors` in the log inspector now carries the raw Google error body (quotaId) — paste it for exact diagnosis.
+
 **Last Updated:** 2026-11-17  
 **Project Status:** bootstrap / active development  
-**DevNotes Version:** v0.4
+**DevNotes Version:** v0.5
