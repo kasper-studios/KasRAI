@@ -161,6 +161,7 @@ export class RouterEngine {
     }
 
     const errors = [];
+    const candidateErrors = [];
     const startTime = Date.now();
     const requestId = crypto.randomUUID();
 
@@ -192,7 +193,20 @@ export class RouterEngine {
       promptTokens: estimatedPromptTokens,
     });
 
+    // Flapping shared pools (cloudcode-pa free tier) often return 429 for EVERY account
+    // for tens of seconds, then release. One retry round with a short backoff saves the
+    // request from a 502; skipped entirely when the failure wasn't quota-family.
+    const RETRY_ROUNDS = 2;
+    const RETRY_DELAY_MS = 10000;
     try {
+      for (let round = 0; round < RETRY_ROUNDS && !clientDisconnected; round++) {
+      if (round > 0) {
+        const allQuota = candidateErrors.length > 0 && candidateErrors.every((e) => e.status === 429);
+        if (!allQuota) break;
+        console.warn(`[Router] All candidates hit 429/quota — retry round #${round + 1} in ${RETRY_DELAY_MS / 1000}s (flapping upstream pool)...`);
+        await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
+        if (clientDisconnected) break;
+      }
       for (let i = 0; i < candidates.length; i++) {
       const candidate = candidates[i];
       const attemptStart = Date.now();
@@ -386,6 +400,16 @@ export class RouterEngine {
         const errDetail = `[${candidate.provider.id}:${candidate.account?.name || candidate.account?.id}]: ${err.message}`;
         console.warn(`[Router] Target failed (${attemptLatency}ms): ${errDetail}`);
         errors.push(errDetail);
+        candidateErrors.push({
+          provider: candidate.provider.id,
+          account: candidate.account?.name || candidate.account?.id || 'default',
+          targetModel: candidate.targetModel,
+          status: err.status || null,
+          message: err.message,
+          // Full upstream body (quota violation ids / RetryInfo live here — the
+          // generic "Resource has been exhausted" message alone is not diagnostic)
+          data: err.data || null,
+        });
 
         // Check if error is ZERO-TOKEN GUARD
         if (err.status === 999 || err.message?.startsWith('APKAKALSA PEDIK')) {
@@ -482,7 +506,8 @@ export class RouterEngine {
         // Release the in-flight slot (runs on success return, error and rotation alike)
         accountInflight.set(iKey, Math.max(0, (accountInflight.get(iKey) || 1) - 1));
       }
-    }
+      }
+      }
 
     // All accounts & providers failed
     const totalLatency = Date.now() - startTime;
@@ -504,7 +529,7 @@ export class RouterEngine {
           account: c.account?.name || c.account?.id || 'default',
         })),
       },
-      upstreamResponse: { error: finalErrMsg, details: errors },
+      upstreamResponse: { error: finalErrMsg, details: errors, candidateErrors },
     });
 
     if (!res.headersSent) {
