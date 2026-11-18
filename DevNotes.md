@@ -387,6 +387,13 @@ Applied to `~/.hermes/hermes-agent/agent/prompt_builder.py` (backup: `prompt_bui
 - Verified via captured-real-prompt surgery: full 54K prompt (RU boilerplate + no HTML comment) → no RESOURCE_EXHAUSTED (999 zero-token on a trivial probe is a separate, benign guard).
 - NOTE: hermes-agent updates will overwrite this patch — re-apply or keep the backup. Restart the Hermes desktop bot to reload the module.
 
+### 20. OpenAI adapter: auto-strip unsupported params on 400 (2026-11-18)
+
+Live failure (Dirom via NVIDIA NIM `integrate.api.nvidia.com/v1`): 400 `Validation: Unsupported parameter(s): 'reasoning'` on both accounts — the agent client sends BOTH `reasoning_effort` AND the `reasoning` object; NIM accepts the former and rejects the latter, and the adapter forwarded the payload verbatim.
+- Fix (`57953d3`): `fetchCompletionsSanitized()` in `openai.js` — on 400 with "Unsupported parameter(s): `x`[, `y`]" the named parameters are stripped from the body and the request retries (up to 3 strips). Universal for any OpenAI-compatible provider with a drifting parameter surface.
+- Verified live through the gateway with the exact failing payload (reasoning object + reasoning_effort + max_tokens + max_completion_tokens): streams fine, kimi thinking (`reasoning_content`) intact, `[DONE]`, usage reported.
+- Note: Dirom discovered and diagnosed this autonomously on the Termux gateway (its analysis of the candidate pool was pre-anti-herd and is superseded by sections 16-19).
+
 **Last Updated:** 2026-11-17  
 **Project Status:** bootstrap / active development  
 **DevNotes Version:** v0.6
