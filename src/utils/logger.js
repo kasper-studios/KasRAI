@@ -70,8 +70,10 @@ export async function logCall(entry) {
       totalTokens: (entry.promptTokens || 0) + (entry.completionTokens || 0),
       stream: !!entry.stream,
       error: entry.error || null,
-      // Truncate potentially huge request/response bodies
-      clientRequest: truncateField(entry.clientRequest || null),
+      // Truncate potentially huge request/response bodies (raw: true skips clientRequest
+      // truncation — used by the all-candidates-failed log to capture the FULL real
+      // system prompt for content-classifier diagnostics)
+      clientRequest: entry.raw ? entry.clientRequest || null : truncateField(entry.clientRequest || null),
       upstreamRequest: truncateField(entry.upstreamRequest || null),
       upstreamResponse: truncateField(entry.upstreamResponse || null),
     };

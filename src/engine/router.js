@@ -528,6 +528,7 @@ export class RouterEngine {
       latencyMs: totalLatency,
       error: finalErrMsg,
       stream: isStream,
+      raw: true, // capture the FULL client request (system prompt) for diagnostics
       clientRequest: requestPayload,
       upstreamRequest: {
         attemptedCandidates: candidates.map((c) => ({
