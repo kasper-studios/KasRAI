@@ -2,6 +2,54 @@ import { BaseAdapter } from './base.js';
 import { getValidAuthToken } from '../utils/oauth.js';
 import { hasGeneratedStreamOutput } from './streamOutput.js';
 
+// OpenAI-compatible providers disagree on parameter surfaces (e.g. NVIDIA NIM rejects the
+// `reasoning` object while accepting `reasoning_effort`). When upstream replies 400 with
+// "Unsupported parameter(s): `x`", strip the named parameters and retry.
+const UNSUPPORTED_PARAM_RE = /Unsupported parameter\(s\):\s*((?:`[^`]+`[,\s]*)+)/gi;
+
+function extractUnsupportedParams(text) {
+  const params = new Set();
+  let match;
+  while ((match = UNSUPPORTED_PARAM_RE.exec(text)) !== null) {
+    for (const p of match[1].matchAll(/`([^`]+)`/g)) params.add(p[1]);
+  }
+  return [...params];
+}
+
+async function fetchCompletionsSanitized(url, headers, body, signal) {
+  let currentBody = { ...body };
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(currentBody),
+      signal,
+    });
+    if (response.ok || response.status !== 400) return { response, body: currentBody };
+
+    const errorText = await response.text();
+    const badParams = extractUnsupportedParams(errorText);
+    if (badParams.length === 0) {
+      // Not a param-surface problem — rebuild an error response for the caller
+      return {
+        response: new Response(errorText, { status: 400, headers: { 'Content-Type': 'application/json' } }),
+        body: currentBody,
+      };
+    }
+    console.warn(`[OpenAIAdapter] Upstream rejected parameter(s) ${badParams.join(', ')} — stripping and retrying (attempt ${attempt + 1})`);
+    currentBody = { ...currentBody };
+    for (const p of badParams) delete currentBody[p];
+  }
+  // Final try with the sanitized body
+  const response = await fetch(url, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(currentBody),
+    signal,
+  });
+  return { response, body: currentBody };
+}
+
 export class OpenAIAdapter extends BaseAdapter {
   constructor(providerConfig, activeAccount = null) {
     super(providerConfig);
@@ -46,12 +94,7 @@ export class OpenAIAdapter extends BaseAdapter {
     };
 
     const headers = await this._getHeaders();
-    const response = await fetch(url, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(body),
-      signal: options.signal,
-    });
+    const { response } = await fetchCompletionsSanitized(url, headers, body, options.signal);
 
     if (!response.ok) {
       const errorText = await response.text();
@@ -97,12 +140,7 @@ export class OpenAIAdapter extends BaseAdapter {
     };
 
     const headers = await this._getHeaders();
-    const response = await fetch(url, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(body),
-      signal: options.signal,
-    });
+    const { response } = await fetchCompletionsSanitized(url, headers, body, options.signal);
 
     if (!response.ok) {
       const errorText = await response.text();
