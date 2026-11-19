@@ -6,6 +6,22 @@ import { resolveAntigravityUpstreamModel } from '../adapters/antigravity.js';
 const PROVIDER_PREFIX_RE = /^(antigravity|gemini|openai|anthropic|kasrai)\//i;
 
 class AccountManager {
+  constructor() {
+    // All provider-account mutations (ban/cooldown/success-stats/heal) run through a
+    // per-provider mutex: concurrent requests doing read-modify-write on the whole
+    // provider object were losing updates (ToS bans got clobbered by racing cooldowns).
+    this._providerLocks = new Map();
+    // In-memory ban bookkeeping: survives lost-update races against providersDB.
+    this._bannedMemory = new Set(); // `${providerId}:${accountId}`
+  }
+
+  _withProviderLock(providerId, fn) {
+    const prev = this._providerLocks.get(providerId) || Promise.resolve();
+    const next = prev.then(fn, fn);
+    this._providerLocks.set(providerId, next.catch(() => {}));
+    return next;
+  }
+
   /**
    * Helper: determine model family/bucket ('gemini-pro', 'gemini-flash', 'claude', or exact model).
    * Pro and Flash are separate quota buckets upstream: a 429 on one must not freeze the other.
@@ -27,10 +43,14 @@ class AccountManager {
 
   /**
    * Retrieves an ordered list of viable accounts for a provider.
-   * Auto-heals expired cooldowns.
+   * Auto-heals expired cooldowns. Serialized per provider (mutation mutex).
    * If targetModel is passed, checks account model-specific quota/buckets!
    */
   async getViableAccounts(providerId, targetModel = null) {
+    return this._withProviderLock(providerId, () => this._getViableAccountsUnlocked(providerId, targetModel));
+  }
+
+  async _getViableAccountsUnlocked(providerId, targetModel = null) {
     const provider = await providersDB.get(providerId);
     if (!provider) return [];
 
@@ -83,6 +103,10 @@ class AccountManager {
 
     const viable = accounts.filter((acc) => {
       if (acc.status === 'disabled' || acc.status === 'invalid' || acc.status === 'banned') {
+        return false;
+      }
+      // In-memory ban bookkeeping: survives lost-update races on providersDB
+      if (this._bannedMemory.has(`${providerId}:${acc.id}`)) {
         return false;
       }
       // If global cooldown is still active, skip
@@ -149,9 +173,14 @@ class AccountManager {
 
   /**
    * Permanently ban an account when upstream returns a Terms of Service / Account Disabled violation.
-   * Sets status to 'banned', records reason, and immediately persists to DB so it never enters rotation again.
+   * Sets status to 'banned', records reason, persists to DB (serialized) and pins it in an
+   * in-memory set so racing read-modify-write cycles can never resurrect it into rotation.
    */
   async banAccount(providerId, accountId, reason) {
+    return this._withProviderLock(providerId, () => this._banAccountUnlocked(providerId, accountId, reason));
+  }
+
+  async _banAccountUnlocked(providerId, accountId, reason) {
     const provider = await providersDB.get(providerId);
     if (!provider) return;
 
@@ -164,6 +193,7 @@ class AccountManager {
     acc.bannedAt = new Date().toISOString();
     acc.cooldownUntil = 0;
     acc.cooldownReason = null;
+    this._bannedMemory.add(`${providerId}:${accountId}`);
 
     console.error(`\n🚨 [KasRAI Alert] Account ${acc.name || acc.id} (${providerId}) BANNED BY GOOGLE ToS! Reason: ${acc.banReason}\n`);
 
@@ -173,10 +203,14 @@ class AccountManager {
 
   /**
    * Put an account on cooldown after a 429 / quota error.
-   * Granular: Freezes ONLY the affected model family ('gemini' or 'claude') for Antigravity,
-   * keeping the other family completely alive!
+   * Granular: Freezes ONLY the affected model family for Antigravity,
+   * keeping the other family completely alive! Serialized per provider.
    */
   async triggerAccountCooldown(providerId, accountId, err, targetModel = null) {
+    return this._withProviderLock(providerId, () => this._triggerAccountCooldownUnlocked(providerId, accountId, err, targetModel));
+  }
+
+  async _triggerAccountCooldownUnlocked(providerId, accountId, err, targetModel = null) {
     const provider = await providersDB.get(providerId);
     if (!provider) return;
 
@@ -293,9 +327,13 @@ class AccountManager {
   }
 
   /**
-   * Record successful call on account
+   * Record successful call on account. Serialized per provider.
    */
   async recordAccountSuccess(providerId, accountId, latencyMs) {
+    return this._withProviderLock(providerId, () => this._recordAccountSuccessUnlocked(providerId, accountId, latencyMs));
+  }
+
+  async _recordAccountSuccessUnlocked(providerId, accountId, latencyMs) {
     const provider = await providersDB.get(providerId);
     if (!provider || !Array.isArray(provider.accounts)) return;
 

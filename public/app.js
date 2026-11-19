@@ -1655,7 +1655,15 @@ async function loadMoreLogs() {
   }
 }
 
-function openLogModal(log) {
+async function openLogModal(log) {
+  // List payloads are slim (bodies stripped); the inspector pulls the full entry by id
+  try {
+    const r = await fetch(`/api/logs/${encodeURIComponent(log.id)}`);
+    if (r.ok) {
+      const full = await r.json();
+      if (full && full.id) log = full;
+    }
+  } catch {}
   activeInspectorLog = log;
   const modal = document.getElementById('log-detail-modal');
   if (!modal) return;
