@@ -394,6 +394,13 @@ Live failure (Dirom via NVIDIA NIM `integrate.api.nvidia.com/v1`): 400 `Validati
 - Verified live through the gateway with the exact failing payload (reasoning object + reasoning_effort + max_tokens + max_completion_tokens): streams fine, kimi thinking (`reasoning_content`) intact, `[DONE]`, usage reported.
 - Note: Dirom discovered and diagnosed this autonomously on the Termux gateway (its analysis of the candidate pool was pre-anti-herd and is superseded by sections 16-19).
 
+### 21. Log bloat fix + ToS-ban stickiness (2026-11-19)
+
+Live 502 (19.11 08:59) revealed two things: (1) `bravldimako` received a Google ToS ban ("This service has been disabled in this account...") — but the ban did not STICK: racing read-modify-write cycles on the provider object resurrected it into rotation; (2) raw-captured clientRequests (54K+ per entry) made logs.db multi-MB and re-serialized on EVERY request → gateway lag + OOM on Termux.
+- logger: `smartTruncate` caps stored bodies at 8KB (16KB for raw diagnostics) keeping head+tail; list payloads are slim (`{truncated, chars}`), the inspector fetches the full entry by id. Measured: 50 log entries = 35KB total (was MBs).
+- accountManager: per-provider mutation mutex (`_withProviderLock`) serializing ban/cooldown/success-stats/heal cycles + in-memory `_bannedMemory` set — a ToS ban can no longer be clobbered by racing cooldown writes.
+- Live pool status after this: 2 accounts weekly-exhausted until Nov 21/22, bravldimako ToS-banned (appeal: forms.gle/hGzM9MEUv2azZsrb9 — ban now sticks), 3 accounts with healthy windows but intermittent bare-429 shaping on flash-high. z.ai OAuth provider queued as extra capacity.
+
 **Last Updated:** 2026-11-17  
 **Project Status:** bootstrap / active development  
 **DevNotes Version:** v0.6
